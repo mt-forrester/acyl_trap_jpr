@@ -1,0 +1,3148 @@
+---
+title: "MLE Brain Feb 2024 Rev 4"
+output: html_document
+date: "2024-02-17"
+---
+
+## Read in Brain Unbound
+## Impute missing data with lowest 3% -/+ 5% of the column SD
+## Calculate Log2FC, p values and adjusted p values
+```{r}
+
+library(tidyverse)
+
+# Read in the Unbound
+library(readr)
+brain_unbound <- read_delim("../TMT_output_philosopher_for_R_analysis/2_14_24_output_for_R/brain_unbound_abundance_protein_MD.tsv", 
+    delim = "\t", escape_double = FALSE, 
+    trim_ws = TRUE)
+
+# Rename columns
+rename_cols <- function(df, start_index, end_index, prefix) {
+  colnames(df)[start_index:end_index] <- paste0(prefix, 1:(end_index - start_index + 1))
+  return(df)
+}
+
+brain_unbound <- rename_cols(brain_unbound, 6, 9, "no_HA_")
+brain_unbound <- rename_cols(brain_unbound, 10, 13, "plus_HA_")
+
+# Remove columns
+brain_unbound <- brain_unbound[,-c(14:21)]
+
+## Imputation of Unbound missing data
+
+# set seed
+set.seed(123)
+
+# Impute with guassian distribution around the lowest 5% with 5% of the column SD
+impute_missing_lowest <- function(df, cols) {
+  for (col in cols) {
+    threshold_value <- quantile(df[[col]], 0.05, na.rm = TRUE)
+    sd_value <- sd(df[[col]], na.rm = TRUE) * 0.05
+    na_indices <- which(is.na(df[[col]]))
+    
+    # Generate random Gaussian noise and add to threshold_value for each NA
+    imputed_values <- threshold_value + rnorm(length(na_indices), mean = 0, sd = sd_value)
+    
+    df[na_indices, col] <- imputed_values
+  }
+  
+  return(df)
+}
+
+
+# Define the columns for imputation
+brain_unbound_cols_to_normalize <- c(paste0("no_HA_", 1:4), paste0("plus_HA_", 1:4))
+
+# For brain_unbound: impute all columns
+brain_unbound <- impute_missing_lowest(brain_unbound, brain_unbound_cols_to_normalize)
+
+
+## Log2FC and P-value Calculation
+
+calculate_pvalue <- function(row, paired=TRUE) {
+  plus_HA_values <- row[5:8]
+  no_HA_values <- row[1:4]
+  
+  # Ensure there are at least 2 non-NA observations in both subsets
+  if(sum(!is.na(plus_HA_values)) >= 2 && sum(!is.na(no_HA_values)) >= 2) {
+    if(paired) {
+      test_result <- t.test(no_HA_values, plus_HA_values, paired = TRUE)
+      return(test_result$p.value)
+    } else {
+      test_result <- t.test(no_HA_values, plus_HA_values)
+      return(test_result$p.value)
+    }
+  } else {
+    return(NA)
+  }
+}
+
+# Calculate Log2FC for the Unbound
+brain_unbound$Log2FC <- rowMeans(brain_unbound[, brain_unbound_cols_to_normalize[5:8]], na.rm = TRUE) - 
+                            rowMeans(brain_unbound[, brain_unbound_cols_to_normalize[1:4]], na.rm = TRUE)
+
+# Calculate p value for the Unbound
+brain_unbound$p_value <- apply(brain_unbound[brain_unbound_cols_to_normalize], 1, calculate_pvalue)
+
+
+# Adjusted p value
+brain_unbound$adj_p_value <- p.adjust(brain_unbound$p_value, method = "BH")
+
+# Volcano plot
+ggplot(brain_unbound, aes(x = Log2FC, y = -log10(p_value))) +
+  geom_point(aes(color = adj_p_value < 0.05), size = 1.5) + # Coloring significant points
+  scale_color_manual(values = c("TRUE" = "red", "FALSE" = "black")) + # True values (significant ones) are colored red
+  theme_minimal() +
+  labs(title = "Volcano Plot of Brain Unbound",
+       x = "Log2 Fold Change",
+       y = "-log10(p-value)") +
+  theme(legend.position = "none") # No need for legend
+
+
+```
+
+
+
+## Read in the Bound data
+## Quantile normalization with grouping
+## Imputation of missing data for the non-NH2OH replicates
+## Scaling of bound by row/protein-specific data when proteins are present in the Unbound
+
+```{r}
+
+library(tidyverse)
+
+## Read in the bound/bound data
+## N-term myristoyl not included
+#brain_bound <- read_delim("../TMT_output_philosopher_for_R_analysis/2_14_24_output_for_R/brain_bound_abundance_multi-site_None.tsv", 
+#    delim = "\t", escape_double = FALSE, 
+#    trim_ws = TRUE)
+
+
+## Read in the bound/bound data
+## N-myristoyl included in search - variable on any protein N-term
+#brain_bound <- read_delim("../TMT_output_philosopher_for_R_analysis/2_14_24_output_for_R/brain_bound_abundance_multi-site_None_myristoyl_included.tsv", 
+#    delim = "\t", escape_double = FALSE, 
+#    trim_ws = TRUE)
+
+
+## Read in the bound/bound data
+## N-myristoyl included in search - variable only on protein N-term Gly
+brain_bound <- read_delim("../TMT_output_philosopher_for_R_analysis/2_14_24_output_for_R/brain_bound_abundance_multi-site_None_myristoyl_included_n_term_gly.tsv", 
+    delim = "\t", escape_double = FALSE, 
+    trim_ws = TRUE)
+
+
+# Rename columns
+rename_cols <- function(df, start_index, end_index, prefix) {
+  colnames(df)[start_index:end_index] <- paste0(prefix, 1:(end_index - start_index + 1))
+  return(df)
+}
+
+brain_bound <- rename_cols(brain_bound, 10, 13, "no_HA_")
+brain_bound <- rename_cols(brain_bound, 14, 17, "plus_HA_")
+
+# Remove columns
+brain_bound <- brain_bound[,-c(18:25)]
+
+
+######## Quantile normalization of no_HA and plus_HA groups separately
+
+library(preprocessCore)
+
+# Specify the groups
+no_HA_data <- brain_bound[, c("no_HA_1", "no_HA_2", "no_HA_3", "no_HA_4")]
+plus_HA_data <- brain_bound[, c("plus_HA_1", "plus_HA_2", "plus_HA_3", "plus_HA_4")]
+
+# Perform quantile normalization
+no_HA_normalized <- normalize.quantiles(as.matrix(no_HA_data))
+plus_HA_normalized <- normalize.quantiles(as.matrix(plus_HA_data))
+
+# Recombine the normalized data back into the dataframe
+brain_bound[, c("no_HA_1", "no_HA_2", "no_HA_3", "no_HA_4")] <- no_HA_normalized
+brain_bound[, c("plus_HA_1", "plus_HA_2", "plus_HA_3", "plus_HA_4")] <- plus_HA_normalized
+
+
+## Assessment of distribution
+
+# Determine which columns to plot
+columns_to_plot <- c("no_HA_1", "no_HA_2", "no_HA_3", "no_HA_4", "plus_HA_1", "plus_HA_2", "plus_HA_3", "plus_HA_4")
+
+# Loop through each column to create a histogram
+for (col in columns_to_plot) {
+  # Determine the number of bins dynamically based on the range and desired bin width
+  data_col <- na.omit(brain_bound[[col]])
+  range_col <- range(data_col)
+  desired_bin_width <- 0.1 # Adjust this value as needed for more or fewer bins
+  num_bins <- ceiling((range_col[2] - range_col[1]) / desired_bin_width)
+  
+  # Create the histogram for the current column with specified number of bins
+  hist(data_col,
+       breaks = num_bins, # This controls the bin width by specifying the number of bins
+       main = paste("Histogram of", col),
+       xlab = col,
+       col = "skyblue",
+       border = "white")
+
+
+}
+
+library(e1071) # For skewness and kurtosis functions
+
+columns_to_analyze <- c("no_HA_1", "no_HA_2", "no_HA_3", "no_HA_4", "plus_HA_1", "plus_HA_2", "plus_HA_3", "plus_HA_4")
+
+for (col in columns_to_analyze) {
+  data <- na.omit(brain_bound[[col]])
+  cat(col, "Skewness:", skewness(data), "\n")
+  cat(col, "Kurtosis:", kurtosis(data), "\n\n")
+}
+
+## Q-Q Plot
+# Determine which columns to plot
+columns_to_plot <- c("no_HA_1", "no_HA_2", "no_HA_3", "no_HA_4", "plus_HA_1", "plus_HA_2", "plus_HA_3", "plus_HA_4")
+
+# Loop through each column to create a Q-Q plot
+for (col in columns_to_plot) {
+  # Omit NA values from the current column
+  data_without_na <- na.omit(brain_bound[[col]])
+  
+  # Create the Q-Q plot for the current column
+  qqnorm(data_without_na, main = paste("Q-Q Plot of", col))
+  qqline(data_without_na, col = "red") # Adds a reference line
+}
+
+
+## Imputation of bound
+
+# Function to impute the non-HA replicates
+impute_missing_lowest <- function(df, cols) {
+  # Iterate over each row
+  for (row_index in 1:nrow(df)) {
+    # Count the number of NAs in the specified columns for the current row
+    na_count <- sum(is.na(df[row_index, cols]))
+    
+    # Check if the number of NAs is 2 or greater
+    if (na_count >= 2) {
+      # Iterate over each specified column to impute missing values
+      for (col in cols) {
+        # Determine the value at the lowest 3% percentile for the column
+        threshold_value <- quantile(df[[col]], 0.03, na.rm = TRUE)
+        
+        # Impute the NA value in the current column if it's NA
+        if (is.na(df[row_index, col])) {
+          df[row_index, col] <- threshold_value
+        }
+      }
+    }
+  }
+  
+  return(df)
+}
+
+
+# For brain_bound: only impute no_HA columns
+brain_bound <- impute_missing_lowest(brain_bound, c("no_HA_1", "no_HA_2", "no_HA_3", "no_HA_4"))
+
+##############
+
+# Add a new column called protein_present_in_unbound
+brain_bound$protein_present_in_unbound <- "No"
+
+# Define the columns for calculation
+brain_cols_to_normalize <- c(paste0("no_HA_", 1:4), paste0("plus_HA_", 1:4))
+
+for (col in brain_cols_to_normalize) {
+  # Find rows in brain_bound that match the Index in brain_unbound
+  brain_rows_to_normalize <- which(brain_bound$ProteinID %in% brain_unbound$Index)
+  
+  # Apply normalization for the matched rows and specific column
+  brain_bound[brain_rows_to_normalize, col] <- brain_bound[brain_rows_to_normalize, col] -
+    (brain_unbound[match(brain_bound$ProteinID[brain_rows_to_normalize], brain_unbound$Index), col])
+  
+  # Update the 'protein_present_in_unbound' column to "Yes" for rows where normalization is applied
+  brain_bound$protein_present_in_unbound[brain_rows_to_normalize] <- "Yes"
+  
+}
+
+## Log2FC and P-value Calculation
+
+# Define the columns for calculation
+brain_cols_to_normalize <- c(paste0("no_HA_", 1:4), paste0("plus_HA_", 1:4))
+
+## Calculate Log2FC
+# Initialize the Log2FC column with NAs
+brain_bound$Log2FC <- NA
+
+# Loop through each row to calculate Log2FC where applicable
+for (i in 1:nrow(brain_bound)) {
+  # Count non-NA values for control and treatment
+  non_na_control <- sum(!is.na(brain_bound[i, brain_cols_to_normalize[1:4]]))
+  non_na_treatment <- sum(!is.na(brain_bound[i, brain_cols_to_normalize[5:8]]))
+  
+  # Check if both control and treatment have at least 3 non-NA values
+  if (non_na_control >= 2 && non_na_treatment >= 2) {
+    # Calculate Log2FC
+    brain_bound$Log2FC[i] <- rowMeans(brain_bound[i, brain_cols_to_normalize[5:8]], na.rm = TRUE) -
+                              rowMeans(brain_bound[i, brain_cols_to_normalize[1:4]], na.rm = TRUE)
+  }
+}
+
+## Function to calculate p value
+calculate_pvalue <- function(row, paired=TRUE) {
+  plus_HA_values <- row[5:8]
+  no_HA_values <- row[1:4]
+  
+  # Ensure we have sufficient non-NA observations in both subsets
+  if(sum(!is.na(plus_HA_values)) >= 3 && sum(!is.na(no_HA_values)) >= 3) {
+    if(paired) {
+      test_result <- t.test(no_HA_values, plus_HA_values, paired = TRUE)
+      return(test_result$p.value)
+    } else {
+      test_result <- t.test(no_HA_values, plus_HA_values)
+      return(test_result$p.value)
+    }
+  } else {
+    return(NA)
+  }
+}
+
+
+# Calculate p value for the bound
+brain_bound$p_value <- apply(brain_bound[brain_cols_to_normalize], 1, calculate_pvalue)
+
+# Adjusted p value
+brain_bound$adj_p_value <- p.adjust(brain_bound$p_value, method = "BH")
+
+
+```
+
+
+## CVs
+## using non log2 transformed values
+```{r}
+
+# Function to compute CV
+compute_cv <- function(df, columns) {
+  mean_value <- rowMeans(df[columns], na.rm = TRUE)
+  sd_value <- apply(df[columns], 1, sd, na.rm = TRUE)
+  return(100 * (sd_value / mean_value))
+}
+
+# Convert log2 values back to their original scale
+brain_unbound_non_log <- brain_unbound
+brain_unbound_non_log[c("no_HA_1", "no_HA_2", "no_HA_3", "no_HA_4", "plus_HA_1", "plus_HA_2", "plus_HA_3", "plus_HA_4")] <- 2^brain_unbound[c("no_HA_1", "no_HA_2", "no_HA_3", "no_HA_4", "plus_HA_1", "plus_HA_2", "plus_HA_3", "plus_HA_4")]
+
+brain_bound_non_log <- brain_bound
+brain_bound_non_log[c("no_HA_1", "no_HA_2", "no_HA_3", "no_HA_4", "plus_HA_1", "plus_HA_2", "plus_HA_3", "plus_HA_4")] <- 2^brain_bound[c("no_HA_1", "no_HA_2", "no_HA_3", "no_HA_4", "plus_HA_1", "plus_HA_2", "plus_HA_3", "plus_HA_4")]
+
+# Compute CV for brain_unbound using non-log2 transformed values
+brain_unbound$CV_no_HA <- compute_cv(brain_unbound_non_log, c("no_HA_1", "no_HA_2", "no_HA_3", "no_HA_4"))
+brain_unbound$CV_plus_HA <- compute_cv(brain_unbound_non_log, c("plus_HA_1", "plus_HA_2", "plus_HA_3", "plus_HA_4"))
+
+# Compute CV for brain_bound using non-log2 transformed values
+brain_bound$CV_no_HA <- compute_cv(brain_bound_non_log, c("no_HA_1", "no_HA_2", "no_HA_3", "no_HA_4"))
+brain_bound$CV_plus_HA <- compute_cv(brain_bound_non_log, c("plus_HA_1", "plus_HA_2", "plus_HA_3", "plus_HA_4"))
+
+rm(brain_bound_non_log)
+
+```
+
+
+
+## Visualization of the CV
+## Defining ggplot theme
+
+```{r}
+
+# Define custom theme
+my_theme <- theme(
+  axis.line = element_line(colour = "black", size = 1),
+  axis.text.x = element_text(size = 20),
+  axis.text.y = element_text(size = 24),
+  axis.title.x = element_text(size = 20),
+  axis.title.y = element_text(size = 20),
+  plot.title = element_text(size = 24, hjust = 0.5)
+)
+
+##### Visualization of the CVs
+
+# specify that rename and select functions should be used from dplyr
+# this is necessary because later packages were masking rename function from dplyr
+rename <- dplyr::rename
+select <- dplyr::select
+
+# Reshape brain_unbound for ggplot
+flow_long <- brain_unbound %>%
+  select(Index, CV_no_HA, CV_plus_HA) %>%
+  gather(key = "Condition", value = "CV", -Index)
+flow_long$type <- "Unbound"
+
+# Reshape brain_bound for ggplot
+bound_long <- brain_bound %>%
+  select(Index, CV_no_HA, CV_plus_HA) %>%
+  gather(key = "Condition", value = "CV", -Index)
+bound_long$type <- "Bound"  # Capitalize "bound" here
+
+# Combining the datasets
+brain_CV_combined <- rbind(flow_long, bound_long)
+
+# Set the order of the levels for type
+brain_CV_combined$type <- factor(brain_CV_combined$type, levels = c("Unbound", "Bound"))
+
+# Use my_theme and then make adjustments specific to this plot
+brain_plot <- ggplot(brain_CV_combined, aes(x = type, y = CV, fill = type)) +
+  geom_boxplot() +
+  scale_fill_manual(values = c("Unbound" = "green", "Bound" = "maroon1")) +  # Ensure colors match the capitalized "bound"
+  coord_cartesian(ylim = c(0, 100)) +
+  labs(
+    title = "Coefficient of Variation - Brain", 
+    y = "CV (%)",
+    x = NULL  # This omits the x-axis label
+  ) +
+  my_theme +  # Use the custom theme
+  theme(
+        legend.position = "none"  # Remove legend
+        # Note: axis.text.x, axis.text.y, and axis.line are already set by my_theme
+  )
+
+# Print the CV boxplot
+print(brain_plot)
+
+# Save the plot to a PDF
+ggsave(filename = "brain_CV_boxplot.pdf", plot = brain_plot, width = 7, height = 5)
+
+# Calculate median CV for each type
+brain_median_CVs <- brain_CV_combined %>%
+  group_by(type) %>%
+  summarise(brain_median_CV = median(CV, na.rm = TRUE))
+
+# Print the median CVs to console
+print(brain_median_CVs)
+
+# remove dataframes
+rm(flow_long)
+rm(bound_long)
+
+```
+
+
+
+# Assigning acylated_high_prob, acylated_low_prob and not_acylated
+# Multi site data - Unique Peptides
+```{r}
+
+# Add a new column 'assignment' based on the conditions
+brain_bound$assignment <- case_when(
+  (brain_bound$Log2FC > 0.59 & brain_bound$adj_p_value <= 0.05) ~ "acylated_high_prob",
+  (brain_bound$Log2FC > 0.59 & brain_bound$adj_p_value > 0.05) ~ "acylated_low_prob",
+  (brain_bound$Log2FC < 0.59) ~ "not_acylated"
+)
+
+table(brain_bound$assignment)
+
+```
+
+
+## Split the multi site data into single sites
+```{r}
+
+# Split up the multi site row into (sometimes) multiple single site rows
+brain_bound <- brain_bound %>%
+  # Create a new column with the part of 'Index' after the first underscore
+  mutate(after_underscore = sub("^[^_]*_", "", Index)) %>%
+  # Extract cysteine sites from the new column
+  mutate(cys_raw = str_extract_all(after_underscore, "C\\d+")) %>%
+  unnest_longer(cys_raw) %>%
+  # Extract just the numbers following 'C' for the 'cys_experiment' column
+  mutate(cys_experiment = as.numeric(str_extract(cys_raw, "\\d+"))) %>%
+  select(-cys_raw, -after_underscore) %>%
+  # Reorder 'cys_experiment' to the 2nd column position
+  relocate(cys_experiment, .after = Index) %>%
+  # Remove the 'Index' column
+  select(-Index) %>%
+  # Rename 'ProteinID' to 'Index'
+  rename(Index = ProteinID) %>%
+  # Move 'Index' column to the first position
+  relocate(Index)
+
+
+# Print the assignment table after splitting into single sites
+table(brain_bound$assignment)
+
+```
+
+
+
+## Matching to Uniprot
+```{r}
+
+## Import the uniprot dataframe that has all mouse lipidation proteins
+uniprot_mouse_lipidation <- read_csv("../uniprot_mouse_lipidation.csv")
+
+### Extract the lipidation data each into a new row based on each Cys that is palmitoylated in uniprot
+# Extract all instances of 'LIPID X' where X is followed by /note="S-palmitoyl
+uniprot_mouse_lipidation <- uniprot_mouse_lipidation %>%
+  mutate(pos = str_extract_all(Lipidation, "(?<=LIPID )\\d+(?=; /note=\"S-palmitoyl)")) %>%
+  unnest(pos)
+
+# Convert pos to numeric
+uniprot_mouse_lipidation$pos <- as.numeric(uniprot_mouse_lipidation$pos)
+
+# Initialize the new column
+brain_bound$uniprot_match <- "no"
+
+# Loop over each row of brain_bound
+for (i in 1:nrow(brain_bound)) {
+  # Check if there's a match in uniprot_mouse_lipidation
+  match_index <- which(uniprot_mouse_lipidation$Entry == brain_bound$Index[i] & 
+                       uniprot_mouse_lipidation$pos == brain_bound$cys_experiment[i])
+  if (length(match_index) > 0) {
+    brain_bound$uniprot_match[i] <- "yes"
+  }
+}
+
+```
+
+
+# Matching to SwissPalm
+```{r}
+##### Swisspalm matching with experimental sites
+
+# Import Swisspalm data for all sites in their database
+library(readr)
+swisspalm_all <- read_csv("../swisspalm_all.csv", 
+    skip = 4)
+
+# Filter swisspalm for validated sites in mouse
+# Rename the DataFrame
+swisspalm_all_mouse <- swisspalm_all
+
+# Filter rows based on criteria
+swisspalm_all_mouse <- swisspalm_all_mouse %>%
+  filter(organism == 'Mus musculus' | study_organism == 'Mus musculus')
+
+# Rename the filtered data frame
+swisspalm_all_mouse_validated <- swisspalm_all_mouse
+
+# Filter swisspalm for large scale = No
+swisspalm_all_mouse_validated <- swisspalm_all_mouse_validated %>% filter(large_scale == "No")
+
+## Filtered based on experimental technique - NOT USING
+# Filter rows where site_techniques contains "Point" or "palmitic"
+# swisspalm_all_mouse_validated <- swisspalm_all_mouse_validated %>%
+#  filter(grepl("Point", site_techniques) | grepl("palmitic", site_techniques))
+
+##### Determine number of unique proteins and sites present when adding swisspalm_validated and uniprot together
+# Total protein and site data in experimentally confirmed
+# Find the unique entries across both data frames
+experimentally_validated_unique_entries_across_both <- union(uniprot_mouse_lipidation$Entry, swisspalm_all_mouse_validated$uniprot_ac)
+
+# Count the number of unique entries
+experimentally_validated_unique_proteins <- length(experimentally_validated_unique_entries_across_both)
+
+# Print the result to the console
+cat("Total number of unique S-palmitoylated proteins uniprot and small scale Swisspalm data:", experimentally_validated_unique_proteins, "\n")
+
+## Unique sites between the two datasets
+
+# Create temporary vectors that contain the unique key combinations for each data frame
+unique_key_uniprot <- paste(uniprot_mouse_lipidation$Entry, uniprot_mouse_lipidation$pos, sep = "_")
+unique_key_swisspalm <- paste(swisspalm_all_mouse_validated$uniprot_ac, swisspalm_all_mouse_validated$pos, sep = "_")
+
+# Find the unique entries (combinations of UniProt Accession and position) across both temporary vectors
+unique_sites_across_both <- union(unique_key_uniprot, unique_key_swisspalm)
+
+# Count the number of unique entries (combinations)
+num_unique_sites <- length(unique_sites_across_both)
+
+# Print the result to the console
+cat("Total number of unique Cys Sites between Uniprot and small scale Swisspalm data:", num_unique_sites, "\n")
+
+# Initialize the new column
+brain_bound$swisspalm_all_match <- "no"
+
+# Loop over each row of brain_bound
+for (i in 1:nrow(brain_bound)) {
+  # Check if there's a match in swisspalm_all_mouse
+  match_index <- which(swisspalm_all_mouse$uniprot_ac == brain_bound$Index[i] & 
+                       swisspalm_all_mouse$pos == brain_bound$cys_experiment[i])
+  if (length(match_index) > 0) {
+    brain_bound$swisspalm_all_match[i] <- "yes"
+  }
+}
+
+# Initialize the new column
+brain_bound$swisspalm_validated_match <- "no"
+
+# Loop over each row of brain_bound
+for (i in 1:nrow(brain_bound)) {
+  # Check if there's a match in swisspalm_all_mouse_validated
+  match_index_validated <- which(swisspalm_all_mouse_validated$uniprot_ac == brain_bound$Index[i] & 
+                       swisspalm_all_mouse_validated$pos == brain_bound$cys_experiment[i])
+  if (length(match_index_validated) > 0) {
+    brain_bound$swisspalm_validated_match[i] <- "yes"
+  }
+}
+
+# Initialize the new column with "unique"
+brain_bound$database_site_match <- "unique"
+
+# Update the column based on conditions
+brain_bound <- brain_bound %>%
+  mutate(
+    database_site_match = case_when(
+      (uniprot_match == "yes" | swisspalm_validated_match == "yes") ~ "experimentally_validated",
+      (uniprot_match == "no" & swisspalm_validated_match == "no" & swisspalm_all_match == "yes") ~ "swisspalm",
+      TRUE ~ "unique"  # Default value, if none of the above conditions are met
+    )
+  )
+
+
+```
+
+
+
+# Statistics for SITE matches to the databases uniprot and swisspalm
+
+```{r}
+
+# Create a new dataframe where 'both' is considered as separate instances for 'uniprot' and 'swisspalm'
+brain_validated_count <- nrow(filter(brain_bound, database_site_match == "experimentally_validated"))
+brain_swisspalm_count <- nrow(filter(brain_bound, database_site_match == "swisspalm"))
+brain_unique_count <- nrow(filter(brain_bound, database_site_match == "unique"))
+
+# Print the counts with labels
+cat("Count for Experimentally Validated:", brain_validated_count, "\n")
+cat("Count for SwissPalm:", brain_swisspalm_count, "\n")
+cat("Count for Unique:", brain_unique_count, "\n")
+
+#### Plotting database_site_match counts based on experimental assignment
+# Define the order and colors of the assignment categories
+assignment_order <- c("not_acylated", "acylated_low_prob", "acylated_high_prob")
+assignment_colors <- c("not_acylated" = "red", "acylated_low_prob" = "orange", "acylated_high_prob" = "blue")
+
+# Plot for "experimentally_validated"
+brain_exp_validated_plot <- ggplot(filter(brain_bound, database_site_match == "experimentally_validated"), aes(x = assignment, fill = assignment)) +
+  geom_bar() +
+  scale_x_discrete(limits = assignment_order) +
+  scale_fill_manual(values = assignment_colors) +
+  ylab("Site Matches") +
+  xlab("Assignment") +
+  ggtitle(paste("Experimentally Validated - ", brain_validated_count)) +
+  my_theme
+
+# Save the plot as PDF
+ggsave("brain_experimentally_validated_plot.pdf", brain_exp_validated_plot)
+
+# Plot for "swisspalm"
+brain_swisspalm_plot <-ggplot(filter(brain_bound, database_site_match == "swisspalm"), aes(x = assignment, fill = assignment)) +
+  geom_bar() +
+  scale_x_discrete(limits = assignment_order) +
+  scale_fill_manual(values = assignment_colors) +
+  ylab("Site Matches") +
+  xlab("Assignment") +
+  ggtitle(paste("SwissPalm - ", brain_swisspalm_count)) +
+  my_theme
+
+# Save the plot as PDF
+ggsave("brain_swisspalm_plot.pdf", brain_swisspalm_plot)
+
+# Plot for "unique"
+brain_unique_plot <- ggplot(filter(brain_bound, database_site_match == "unique"), aes(x = assignment, fill = assignment)) +
+  geom_bar() +
+  scale_x_discrete(limits = assignment_order) +
+  scale_fill_manual(values = assignment_colors) +
+  ylab("Site Matches") +
+  xlab("Assignment") +
+  ggtitle(paste("Unique - ", brain_unique_count)) +
+  my_theme
+
+# Save the plot as PDF
+ggsave("brain_unique_plot.pdf", brain_unique_plot)
+
+# print the plots
+print(brain_exp_validated_plot)
+print(brain_swisspalm_plot)
+print(brain_unique_plot)
+
+```
+
+
+# Volcano Plot
+# Coloring by assignment
+
+```{r}
+
+
+# Define custom theme
+my_theme <- theme(
+  axis.line = element_line(colour = "black", size = 1),
+  axis.text.y = element_text(size = 24),
+  axis.title.y = element_text(size = 18),
+  axis.text.x = element_text(size = 24),
+  axis.title.x = element_text(size = 18),
+  plot.title = element_text(size = 22, hjust = 0.5),
+  legend.position = "none",       # Remove legend
+)
+
+library(ggplot2)
+
+# Calculate negative log10 p-value for both datasets and add a 'Type' column
+brain_bound$neg_log10_p_value <- -log10(brain_bound$p_value)
+brain_bound$type <- "bound"
+
+brain_unbound$neg_log10_p_value <- -log10(brain_unbound$p_value)
+brain_unbound$type <- "unbound"
+
+# Create the ggplot object for the combined plot
+brain_combined_volcano_plot <- ggplot() +
+  aes(x=Log2FC, y=neg_log10_p_value) +
+  coord_cartesian(xlim = c(-3.5, 10.5)) +
+  
+  # Add points for brain_bound
+  geom_point(data = brain_bound, aes(color = assignment), size = 1, alpha = 0.5, na.rm = TRUE) +
+  
+  # Add points for brain_unbound
+  geom_point(data = brain_unbound, color = "green", size = 1, alpha = 0.5, na.rm = TRUE) +
+  
+  # Customize the color for assignment
+  scale_color_manual(values = c("not_acylated" = "red", "acylated_low_prob" = "orange", "acylated_high_prob" = "blue")) +
+  
+  # Apply custom theme
+  my_theme +
+  
+   # Add titles
+  labs(x = "Log2 FC -/+ NH2OH", y = "- Log10 p-value", title = "Acyl-Trap of Mouse Brain")
+
+# Display the plot
+print(brain_combined_volcano_plot)
+
+```
+
+
+## Volcano
+## Unbound as inset plot
+```{r}
+
+library(ggplot2)
+library(cowplot)
+
+# Custom theme
+my_theme <- theme(
+  axis.line = element_line(colour = "black", size = 1),
+  axis.text.y = element_text(size = 24),
+  axis.title.y = element_text(size = 18),
+  axis.text.x = element_text(size = 24),
+  axis.title.x = element_text(size = 18),
+  plot.title = element_text(size = 22, hjust = 0.5),
+  legend.position = "none"       # Remove legend
+)
+
+# Calculate negative log10 p-value
+brain_bound$neg_log10_p_value <- -log10(brain_bound$p_value)
+brain_unbound$neg_log10_p_value <- -log10(brain_unbound$p_value)
+
+# Create and display the ggplot object for brain_bound
+brain_bound_plot <- ggplot(data=brain_bound, aes(x=Log2FC, y=neg_log10_p_value, color=assignment)) +
+  geom_point(size = 1, alpha = 0.5, na.rm = TRUE) +
+  coord_cartesian(xlim = c(-10.5, 10.5)) +
+  scale_color_manual(values = c("not_acylated" = "red", "acylated_low_prob" = "orange", "acylated_high_prob" = "blue")) +
+  my_theme +
+  labs(x = "Log2 FC -/+ NH2OH", y = "- Log10 p-value")
+
+print(brain_bound_plot)
+
+# Create and display the ggplot object for brain_unbound
+brain_unbound_plot <- ggplot(data=brain_unbound, aes(x=Log2FC, y=neg_log10_p_value)) +
+  geom_point(color="black", size = 0.5, alpha = 0.3, na.rm = TRUE) +
+  coord_cartesian(xlim = c(-10.5, 10.5), ylim = c(0, 5)) +  # Set x- and y-axis limits
+  theme(
+    axis.line = element_line(colour = "black", size = 1),
+    axis.text.y = element_text(size = 10),     # restored y axis labels
+    axis.text.x = element_text(size = 10),     # restored x axis labels
+    axis.title.x = element_blank(),             # Remove x axis title
+    axis.title.y = element_blank(),             # Remove y axis title
+    legend.position = "none",                   # Remove legend
+    plot.title = element_text(size = 12, hjust = 0.5)   # Set plot title size and alignment
+  ) +
+  labs(title = "Unbound")  # Add plot title
+
+
+print(brain_unbound_plot)
+
+# Combine plots
+brain_combined_plot <- ggdraw(brain_bound_plot) + 
+  draw_plot(brain_unbound_plot, x = 0.12, y = 0.22, width = 0.3, height = 0.5)
+
+# Display the combined plot
+print(brain_combined_plot)
+
+# save the plot to pdf
+ggsave(filename="brain_volcano.pdf", plot=brain_combined_plot, width=6, height=4)
+
+# print the values for each assignment to console
+table(brain_bound$assignment)
+
+
+```
+
+
+
+## Volcano plots based on Database match
+## Experimentally Confirmed on a volcano plot
+```{r}
+
+library(ggplot2)
+library(dplyr)
+library(ggrepel)
+
+# Custom theme
+my_theme <- theme(
+  axis.line = element_line(colour = "black", size = 1),
+  axis.text.y = element_text(size = 24),
+  axis.title.y = element_text(size = 18),
+  axis.text.x = element_text(size = 24),
+  axis.title.x = element_text(size = 18),
+  plot.title = element_text(size = 22, hjust = 0.5),
+  legend.position = "none"       # Remove legend
+)
+
+# Filter the data
+brain_filtered_data <- brain_bound[brain_bound$database_site_match %in% c("experimentally_validated", "swisspalm", "unique"), ]
+
+# Filter data for unique database_site_match, non-NA adj_p_value < 0.05
+brain_top_genes <- brain_bound %>%
+  filter(database_site_match == "unique" & !is.na(adj_p_value) & adj_p_value < 0.05) %>%
+  arrange(desc(Log2FC)) %>%
+  head(15) %>%
+  select(Gene, cys_experiment, Log2FC, neg_log10_p_value)
+
+# Extract only experimentally_validated data for labeling
+brain_label_data_exp_validated <- brain_filtered_data[brain_filtered_data$database_site_match == "experimentally_validated", ]
+
+# Calculate maximum and minimum values for x and y for the limits of the plot
+x_limits <- range(brain_filtered_data$Log2FC, na.rm = TRUE)
+y_limits <- range(brain_filtered_data$neg_log10_p_value, na.rm = TRUE)
+
+# Define nudge values based on the range of data; increasing the factor for more separation
+x_nudge_exp_validated <- diff(x_limits) * 0.35  # Push further to the left
+x_nudge_top_genes <- diff(x_limits) * 0.35      # Push further to the right
+
+brain_volcano_database <- ggplot(brain_filtered_data, aes(x = Log2FC, y = neg_log10_p_value, color = database_site_match)) +
+  
+  # Scatter plot for swisspalm and remaining unique points (excluding brain_top_genes)
+  geom_point(data = subset(brain_filtered_data, !(Gene %in% brain_top_genes$Gene & cys_experiment %in% brain_top_genes$cys_experiment) & database_site_match != "experimentally_validated"),
+             aes(shape = database_site_match), alpha = 0.4, size = 1.2) +
+
+  # Scatter plot for experimentally_validated points
+  geom_point(data = subset(brain_filtered_data, database_site_match == "experimentally_validated"),
+             aes(shape = database_site_match), alpha = 1.0, size = 2) +
+
+  # Scatter plot for brain_top_genes points as triangles
+  geom_point(data = brain_top_genes, 
+             aes(shape = "brain_top_genes"), color = "grey1", alpha = 1.0, size = 2) +
+
+  # Label the experimentally_validated points with geom_label_repel
+  geom_label_repel(data = brain_label_data_exp_validated,
+                   aes(label = paste(Gene, cys_experiment, sep = "_"), color = database_site_match),
+                   nudge_x = -x_nudge_exp_validated,  # Using specific nudge for experimentally_validated
+                   size = 3, box.padding = 0.35, point.padding = 0.5, segment.color = 'grey50') +
+
+  # Label the brain_top_genes with geom_label_repel using brain_top_genes directly
+  geom_label_repel(data = brain_top_genes,
+                   aes(label = paste(Gene, cys_experiment, sep = "_"), color = "unique"),
+                   nudge_x = x_nudge_top_genes,       # Using specific nudge for top_genes
+                   size = 3, box.padding = 0.35, point.padding = 0.5, segment.color = 'grey50') +
+
+  # Expand limits to ensure labels don't get cut off
+  coord_cartesian(xlim = c(x_limits[1] - x_nudge_exp_validated, x_limits[2] + x_nudge_top_genes),
+                  ylim = c(y_limits[1], y_limits[2])) +
+  
+  # Color settings
+  # scale_color_manual(values = c("experimentally_validated" = "#FFA500", "swisspalm" = "#008080", "unique" = "#800080")) +
+  # scale_color_manual(values = c("experimentally_validated" = "purple", "swisspalm" = "gold2", "unique" = "green3")) +
+  scale_color_manual(values = c("experimentally_validated" = "purple", "swisspalm" = "#008080", "unique" = "grey1")) +
+  
+  # Shape settings
+  scale_shape_manual(values = c("experimentally_validated" = 17, "swisspalm" = 16, "unique" = 16, "brain_top_genes" = 17)) +  # Added brain_top_genes as triangles
+  
+  labs(title = "Brain: Database Matching",
+       x = "Log2 FC -/+ NH2OH",
+       y = "-Log10 p-value") +
+  my_theme
+
+print(brain_volcano_database)
+
+# save the plot to pdf
+ggsave(filename="brain_volcano_database.pdf", plot=brain_volcano_database, width=6, height=4)
+
+```
+
+
+# Top unique proteins that are acylated_high_prob
+```{r}
+
+library(dplyr)
+
+# Filter data for unique database_site_match, non-NA adj_p_value < 0.05
+brain_top_genes <- brain_bound %>%
+  filter(database_site_match == "unique" & !is.na(adj_p_value) & adj_p_value < 0.05) %>%
+  arrange(desc(Log2FC)) %>%
+  head(15) %>%
+  select(Gene, cys_experiment)
+
+# Print to console
+print(brain_top_genes)
+
+
+```
+
+
+# Pie charts for database site matches
+```{r}
+
+# My theme for pie chart
+my_theme <- function(title_color = "black") {
+  theme_minimal() +
+    theme(
+      axis.title.x = element_blank(),
+      axis.title.y = element_blank(),
+      axis.text.x = element_blank(),
+      axis.text.y = element_blank(),
+      axis.ticks.x = element_blank(),
+      axis.ticks.y = element_blank(),
+      panel.grid = element_blank(),
+      panel.border = element_blank(),
+      legend.position = "none",             # Remove legend
+      plot.title = element_text(size = 24,  # Font size for title
+                                hjust = 0.5, # Horizontally center the title
+                                margin = margin(t = 0, b = 0), # Adjust the margin of title
+                                color = title_color,  # Set title color
+                                face = "bold"
+                               ),
+      plot.title.position = "plot", # Center title with the plot
+    )
+}
+
+# Function to generate pie chart for given database_site_match category
+create_pie_chart <- function(data, category_name) {
+  subset_data <- data %>% 
+    filter(database_site_match == category_name) %>%
+    filter(!is.na(assignment)) %>%
+    group_by(assignment) %>%
+    summarize(count = n())
+  
+  # Specify titles and title colors based on category_name
+  title_colors <- c("experimentally_validated" = "black", "swisspalm" = "black", "unique" = "black")
+  
+  if (category_name == "experimentally_validated") {
+    plot_title <- "Low Throughput (LTP)"
+  } else if (category_name == "swisspalm") {
+    plot_title <- "High Throughput (HTP)"
+  } else if (category_name == "unique") {
+    plot_title <- "Unique"
+  } else {
+    plot_title <- category_name
+  }
+  
+  ggplot(subset_data, aes(x = "", y = count, fill = assignment)) +
+    geom_bar(stat = "identity", width = 1) +
+    coord_polar(theta = "y") +
+    labs(title = plot_title) +
+    scale_fill_manual(values = c("acylated_high_prob" = "blue", 
+                                 "acylated_low_prob" = "orange", 
+                                 "not_acylated" = "red")) +
+    geom_text(aes(label = count), position = position_stack(vjust = 0.5), color = "white", size = 9) +
+    theme_minimal() +  
+    my_theme(title_colors[[category_name]])  # Pass title color here           
+}
+
+# Create pie charts
+brain_pie_exp_validated <- create_pie_chart(brain_bound, "experimentally_validated")
+brain_pie_swisspalm <- create_pie_chart(brain_bound, "swisspalm")
+brain_pie_unique <- create_pie_chart(brain_bound, "unique")
+
+# Print pie charts
+print(brain_pie_exp_validated)
+print(brain_pie_swisspalm)
+print(brain_pie_unique)
+
+# Save the pie charts to pdf
+ggsave(filename="brain_pie_exp_validated.pdf", plot=brain_pie_exp_validated, width=6, height=4)
+ggsave(filename="brain_pie_swisspalm.pdf", plot=brain_pie_swisspalm, width=6, height=4)
+ggsave(filename="brain_pie_unique.pdf", plot=brain_pie_unique, width=6, height=4)
+
+
+```
+
+
+## Statistics for database matches
+
+```{r}
+
+
+## Mean Log2FC and adjusted p value for the experimentally validated site matches
+
+# Filter the dataframe for experimentally_validated and calculate means
+experimentally_validated_means <- brain_bound %>%
+  filter(database_site_match == "experimentally_validated") %>%
+  summarize(mean_Log2FC = mean(Log2FC, na.rm = TRUE),
+            mean_adj_p_value = mean(adj_p_value, na.rm = TRUE))
+
+# Print the results with a title
+cat("Mean Log2FC and Mean Adjusted P-Value for Experimentally Validated Entries:\n")
+print(experimentally_validated_means)
+
+```
+
+
+
+
+# Remove dataframes no longer needed
+```{r}
+
+rm(ADH1_values)
+rm(brain_assignment_df)
+rm(brain_assignment_df_summarized)
+rm(brain_combined)
+rm(brain_CV_combined)
+rm(brain_bound_sub)
+rm(brain_filtered_bound)
+rm(brain_unbound_sub)
+rm(brain_heatmap_data_sorted)
+rm(brain_heatmap_data_replicates)
+rm(brain_median_CVs)
+rm(brain_plot)
+rm(brain_plot_df)
+rm(brain_uniprot_plot)
+rm(brain_unique_plot)
+rm(brain_volcano_plot)
+rm(bound_long)
+rm(flow_long)
+rm(plot_acylated_low_prob)
+rm(plot_not_acylated)
+rm(plot_acylated_high_prob)
+rm(rows_to_remove)
+rm(swisspalm_and_both)
+rm(uniprot_and_both)
+rm(unique_db)
+rm(volcano_plot)
+
+```
+
+
+
+## Defining gene lists for the GO analyses
+## Define the "acylated_high_prob" gene list
+## Define the "unenriched" gene list = Unbound proteins minus the acylated_high_prob
+## This list is essentially the "unenriched"
+```{r}
+
+# Define the putative acylated
+brain_acylated_high_prob <- filter(brain_bound, assignment == "acylated_high_prob")
+
+# Define the acylated_low_prob
+brain_acylated_low_prob <- filter(brain_bound, assignment == "acylated_low_prob")
+
+# Define the not_acylated
+brain_not_acylated <- filter(brain_bound, assignment == "not_acylated")
+
+# Combine the putative acylated and acylated_low_prob into one data frame
+rows_to_remove <- bind_rows(brain_acylated_high_prob, brain_acylated_low_prob) %>%
+  select(Index)
+
+# Create the new dataframe brain_unenriched by removing these rows from brain_unbound
+brain_unenriched <- anti_join(brain_unbound, rows_to_remove, by = "Index")
+
+```
+
+
+
+# ORA comparing acylated_high_prob with a universal gene list
+```{r}
+
+# Load required libraries
+library(dplyr)
+library(clusterProfiler)
+library(ggplot2)
+library(org.Mm.eg.db)
+
+# Extract unique gene names from the two datasets
+brain_genes_acylated <- unique(brain_acylated_high_prob$Gene)
+brain_genes_not_acylated <- unique(brain_not_acylated$Gene)
+brain_genes_unbound <- unique(brain_unbound$Gene)
+
+# Merge the gene lists to create a comprehensive universe
+brain_complete_universe <- unique(c(brain_genes_unbound, brain_genes_not_acylated, brain_genes_acylated))
+
+# Perform ORA
+brain_enrich_result_acylated <- enrichGO(gene = brain_genes_acylated,
+                                         universe = brain_complete_universe,
+                                         OrgDb = org.Mm.eg.db,
+                                         keyType = "SYMBOL",
+                                         ont = "ALL",
+                                         pAdjustMethod = "BH",
+                                         pvalueCutoff = 0.05,
+                                         qvalueCutoff = 0.05)
+
+# Access the actual data frame from the result
+brain_enrich_result_acylated_df <- as.data.frame(brain_enrich_result_acylated)
+
+# Save results to a file
+write.table(brain_enrich_result_acylated_df, file = "brain_enrich_result_acylated.txt", sep = "\t", quote = FALSE, row.names = FALSE, col.names = TRUE)
+
+# Modify the sort_and_plot function for dot plot
+sort_and_plot <- function(df, title) {
+  
+  # Convert GeneRatio to numeric for sorting
+  df$GeneRatioNumeric <- as.numeric(unlist(lapply(strsplit(as.character(df$GeneRatio), "/"), function(x) as.numeric(x[1])/as.numeric(x[2]))))
+  
+  # Sort by GeneRatio and take the top 15 terms
+  df_sorted <- df %>%
+    arrange(desc(GeneRatioNumeric)) %>%
+    head(15)
+  
+  # Dot plot
+  plot <- ggplot(df_sorted, aes(x = reorder(Description, GeneRatioNumeric), y = GeneRatioNumeric)) +
+  geom_point(aes(color = qvalue, size = Count)) +
+  scale_color_gradient(low = "blue", high = "red", name = "qvalue") +
+  scale_size_continuous(name = "Count") +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 14),       # X axis values font size
+    axis.text.y = element_text(size = 10),                              # Y axis values font size
+    axis.title.x = element_text(size = 18),                                     # Remove x-axis title
+    axis.title.y = element_text(size = 18),                             # Y axis title font size
+    plot.title = element_text(size = 16, hjust = 0.5),                  # Main title font size
+    legend.text = element_text(size = 12),
+    legend.title = element_text(size = 14)
+  ) +
+  labs(y = "Gene Ratio", x = NULL, title = title) +                     # NULL removes x label
+  coord_flip() +
+  guides(size = guide_legend(order = 1), color = guide_colorbar(order = 2))
+  
+  # Display the plot (optional)
+  print(plot)
+  
+  # Save the plot to a PDF with the specified name
+  ggsave(filename = "brain_ORA_GO.pdf", plot = plot)
+}
+  
+# Plot for the complete dataset
+sort_and_plot(brain_enrich_result_acylated_df, "Top 15 Terms in Brain Acylated Genes")
+
+
+```
+
+
+
+### Brain with BP, MF and CC separate
+```{r}
+# Load required libraries
+library(dplyr)
+library(clusterProfiler)
+library(ggplot2)
+library(org.Mm.eg.db)
+
+# Extract unique gene names from the new datasets
+brain_genes_acylated <- unique(brain_acylated_high_prob$Gene)
+brain_genes_not_acylated <- unique(brain_not_acylated$Gene)
+brain_genes_unbound <- unique(brain_unbound$Gene)
+
+# Merge the gene lists to create a comprehensive universe for brain
+brain_complete_universe <- unique(c(brain_genes_unbound, brain_genes_not_acylated, brain_genes_acylated))
+
+# Adjusted function to perform ORA and plot for brain using a given ontology
+perform_ORA_and_plot_brain <- function(ont) {
+  brain_enrich_result <- enrichGO(gene = brain_genes_acylated,
+                                universe = brain_complete_universe,
+                                OrgDb = org.Mm.eg.db,
+                                keyType = "SYMBOL",
+                                ont = ont,
+                                pAdjustMethod = "BH",
+                                pvalueCutoff = 0.05,
+                                qvalueCutoff = 0.05)
+  
+  # Convert to data frame
+  brain_enrich_result_df <- as.data.frame(brain_enrich_result)
+  
+  # Sort and plot function adapted for brain dot plot
+  sort_and_plot_brain <- function(df, title) {
+    df$GeneRatioNumeric <- as.numeric(unlist(lapply(strsplit(as.character(df$GeneRatio), "/"), function(x) as.numeric(x[1])/as.numeric(x[2]))))
+    df_sorted <- df %>%
+      arrange(desc(GeneRatioNumeric)) %>%
+      head(15)
+    
+    plot <- ggplot(df_sorted, aes(x = reorder(Description, GeneRatioNumeric), y = GeneRatioNumeric)) +
+      geom_point(aes(color = qvalue, size = Count)) +
+      scale_color_gradient(low = "blue", high = "red", name = "qvalue") +
+      scale_size_continuous(name = "Count") +
+      theme(
+        axis.text.x = element_text(angle = 45, hjust = 1, size = 14),
+        axis.text.y = element_text(size = 10),
+        axis.title.x = element_blank(), # Remove x-axis title
+        axis.title.y = element_text(size = 18),
+        plot.title = element_text(size = 16, hjust = 0.5),
+        legend.text = element_text(size = 12),
+        legend.title = element_text(size = 14)
+      ) +
+      labs(y = "Gene Ratio", title = title) +
+      coord_flip() +
+      guides(size = guide_legend(order = 1), color = guide_colorbar(order = 2))
+    
+    print(plot)
+    
+    # Save the plot to a PDF with a dynamic file name based on ontology
+    ggsave(filename = paste("brain_ORA_GO_", ont, ".pdf", sep = ""), plot = plot, width = 11, height = 8)
+  }
+  
+  # Call the plotting function for brain
+  sort_and_plot_brain(brain_enrich_result_df, paste("Top 15 Terms in brain Acylated Genes -", ont))
+}
+
+# List of ontologies to analyze and plot for brain
+ont_list <- c("BP", "CC", "MF")
+
+# Loop through each ontology and perform ORA and plotting for brain
+for(ont in ont_list) {
+  perform_ORA_and_plot_brain(ont)
+}
+
+```
+
+
+
+##### MLE12 #####
+
+## Read in MLE12 Unbound
+## Impute missing data with lowest 3% -/+ 5% of the column SD
+## Calculate Log2FC, p values and adjusted p values
+
+```{r}
+
+library(tidyverse)
+
+# read in the Unbound
+library(readr)
+MLE_unbound <- read_delim("../TMT_output_philosopher_for_R_analysis/2_14_24_output_for_R/MLE_unbound_abundance_protein_MD.tsv", 
+    delim = "\t", escape_double = FALSE, 
+    trim_ws = TRUE)
+
+# Rename columns
+rename_cols <- function(df, start_index, end_index, prefix) {
+  colnames(df)[start_index:end_index] <- paste0(prefix, 1:(end_index - start_index + 1))
+  return(df)
+}
+
+MLE_unbound <- rename_cols(MLE_unbound, 14, 17, "no_HA_")
+MLE_unbound <- rename_cols(MLE_unbound, 18, 21, "plus_HA_")
+
+# Remove columns
+MLE_unbound <- MLE_unbound[,-c(6:13)]
+
+
+## Imputation of Unbound missing data
+
+# set seed
+set.seed(123)
+
+# Impute with guassian distribution around the lowest 5% with 5% of the column SD
+impute_missing_lowest <- function(df, cols) {
+  for (col in cols) {
+    threshold_value <- quantile(df[[col]], 0.05, na.rm = TRUE)
+    sd_value <- sd(df[[col]], na.rm = TRUE) * 0.05
+    na_indices <- which(is.na(df[[col]]))
+    
+    # Generate random Gaussian noise and add to threshold_value for each NA
+    imputed_values <- threshold_value + rnorm(length(na_indices), mean = 0, sd = sd_value)
+    
+    df[na_indices, col] <- imputed_values
+  }
+  
+  return(df)
+}
+
+
+# Define the columns to impute
+MLE_unbound_cols_to_normalize <- c(paste0("no_HA_", 1:4), paste0("plus_HA_", 1:4))
+
+# For MLE_unbound: impute all columns
+MLE_unbound <- impute_missing_lowest(MLE_unbound, MLE_unbound_cols_to_normalize)
+
+
+## Log2FC and P-value Calculation
+
+calculate_pvalue <- function(row, paired=TRUE) {
+  plus_HA_values <- row[5:8]
+  no_HA_values <- row[1:4]
+  
+  # Ensure we have at least 2 non-NA observations in both subsets
+  if(sum(!is.na(plus_HA_values)) >= 2 && sum(!is.na(no_HA_values)) >= 2) {
+    if(paired) {
+      test_result <- t.test(no_HA_values, plus_HA_values, paired = TRUE)
+      return(test_result$p.value)
+    } else {
+      test_result <- t.test(no_HA_values, plus_HA_values)
+      return(test_result$p.value)
+    }
+  } else {
+    return(NA)
+  }
+}
+
+# Calculate Log2FC for the Unbound
+MLE_unbound$Log2FC <- rowMeans(MLE_unbound[, MLE_unbound_cols_to_normalize[5:8]], na.rm = TRUE) - 
+                            rowMeans(MLE_unbound[, MLE_unbound_cols_to_normalize[1:4]], na.rm = TRUE)
+
+
+# Calculate p value for the Unbound
+MLE_unbound$p_value <- apply(MLE_unbound[MLE_unbound_cols_to_normalize], 1, calculate_pvalue)
+
+# Adjusted p value
+MLE_unbound$adj_p_value <- p.adjust(MLE_unbound$p_value, method = "BH")
+
+
+# Volcano plot
+ggplot(MLE_unbound, aes(x = Log2FC, y = -log10(p_value))) +
+  geom_point(aes(color = adj_p_value < 0.05), size = 1.5) + # Coloring significant points
+  scale_color_manual(values = c("TRUE" = "red", "FALSE" = "black")) + # True values (significant ones) are colored red
+  theme_minimal() +
+  labs(title = "Volcano Plot of MLE Unbound",
+       x = "Log2 Fold Change",
+       y = "-log10p-value)") +
+  theme(legend.position = "none") # No need for legend
+
+
+```
+
+
+## Read in the Bound data
+## Quantile normalization with grouping
+## Imputation of missing data for the non-NH2OH replicates
+## Scaling of bound by row/protein-specific data when proteins are present in the Unbound
+```{r}
+
+library(tidyverse)
+
+## Read in the bound data
+## N-term Myristoyl NOT included in search
+#MLE_bound <- read_delim("../TMT_output_philosopher_for_R_analysis/2_14_24_output_for_R/MLE_bound_abundance_multi-site_None.tsv", 
+#    delim = "\t", escape_double = FALSE, 
+#    trim_ws = TRUE)
+
+## Read in the bound data
+## N-term Myristoyl IS included in search but is on any protein N-term
+#MLE_bound <- read_delim("../TMT_output_philosopher_for_R_analysis/2_14_24_output_for_R/MLE_bound_abundance_multi-site_None_myristoyl_included.tsv", 
+#    delim = "\t", escape_double = FALSE, 
+#    trim_ws = TRUE)
+
+## Read in the bound data
+## N-term Myristoyl IS included in search but only on N-term Gly
+MLE_bound <- read_delim("../TMT_output_philosopher_for_R_analysis/2_14_24_output_for_R/MLE_bound_abundance_multi-site_None_myristoyl_included_n_term_gly.tsv", 
+    delim = "\t", escape_double = FALSE, 
+    trim_ws = TRUE)
+
+
+# Rename columns
+rename_cols <- function(df, start_index, end_index, prefix) {
+  colnames(df)[start_index:end_index] <- paste0(prefix, 1:(end_index - start_index + 1))
+  return(df)
+}
+
+MLE_bound <- rename_cols(MLE_bound, 18, 21, "no_HA_")
+MLE_bound <- rename_cols(MLE_bound, 22, 25, "plus_HA_")
+
+# Remove columns
+MLE_bound <- MLE_bound[,-c(10:17)]
+
+
+# Calculate the mean median for no_HA columns and normalize
+no_HA_medians <- sapply(MLE_bound[, paste0("no_HA_", 1:4)], median, na.rm = TRUE)
+mean_median_no_HA <- mean(no_HA_medians, na.rm = TRUE)
+
+MLE_bound[, paste0("no_HA_", 1:4)] <- sapply(MLE_bound[, paste0("no_HA_", 1:4)], function(column) {
+  column - median(column, na.rm = TRUE) + mean_median_no_HA
+})
+
+# Calculate the mean median for plus_HA columns and normalize
+plus_HA_medians <- sapply(MLE_bound[, paste0("plus_HA_", 1:4)], median, na.rm = TRUE)
+mean_median_plus_HA <- mean(plus_HA_medians, na.rm = TRUE)
+
+MLE_bound[, paste0("plus_HA_", 1:4)] <- sapply(MLE_bound[, paste0("plus_HA_", 1:4)], function(column) {
+  column - median(column, na.rm = TRUE) + mean_median_plus_HA
+})
+
+## Imputation of bound
+
+# Function to impute the non-HA replicates
+impute_missing_lowest <- function(df, cols) {
+  # Iterate over each row
+  for (row_index in 1:nrow(df)) {
+    # Count the number of NAs in the specified columns for the current row
+    na_count <- sum(is.na(df[row_index, cols]))
+    
+    # Check if the number of NAs is 2 or greater
+    if (na_count >= 2) {
+      # Iterate over each specified column to impute missing values
+      for (col in cols) {
+        # Determine the value at the lowest 3% percentile for the column
+        threshold_value <- quantile(df[[col]], 0.03, na.rm = TRUE)
+        
+        # Impute the NA value in the current column if it's NA
+        if (is.na(df[row_index, col])) {
+          df[row_index, col] <- threshold_value
+        }
+      }
+    }
+  }
+  
+  return(df)
+}
+
+
+# For MLE_bound: only impute no_HA columns
+MLE_bound <- impute_missing_lowest(MLE_bound, c("no_HA_1", "no_HA_2", "no_HA_3", "no_HA_4"))
+
+# Add a new column called protein_present_in_unbound
+MLE_bound$protein_present_in_unbound <- "No"
+
+# Define the columns for calculation
+MLE_cols_to_normalize <- c(paste0("no_HA_", 1:4), paste0("plus_HA_", 1:4))
+
+for (col in MLE_cols_to_normalize) {
+  # Find rows in MLE_bound that match the Index in MLE_unbound
+  MLE_rows_to_normalize <- which(MLE_bound$ProteinID %in% MLE_unbound$Index)
+  
+  # Apply normalization for the matched rows and specific column
+  MLE_bound[MLE_rows_to_normalize, col] <- MLE_bound[MLE_rows_to_normalize, col] -
+    (MLE_unbound[match(MLE_bound$ProteinID[MLE_rows_to_normalize], MLE_unbound$Index), col])
+  
+  # Update the 'protein_present_in_unbound' column to "Yes" for rows where normalization is applied
+  MLE_bound$protein_present_in_unbound[MLE_rows_to_normalize] <- "Yes"
+  
+}
+
+## Log2FC and P-value Calculation
+
+# Define the columns for calculation
+MLE_cols_to_normalize <- c(paste0("no_HA_", 1:4), paste0("plus_HA_", 1:4))
+
+## Calculate Log2FC
+# Initialize the Log2FC column with NAs
+MLE_bound$Log2FC <- NA
+
+# Loop through each row to calculate Log2FC where applicable
+for (i in 1:nrow(MLE_bound)) {
+  # Count non-NA values for control and treatment
+  non_na_control <- sum(!is.na(MLE_bound[i, MLE_cols_to_normalize[1:4]]))
+  non_na_treatment <- sum(!is.na(MLE_bound[i, MLE_cols_to_normalize[5:8]]))
+  
+  # Check if both control and treatment have at least 3 non-NA values
+  if (non_na_control >= 2 && non_na_treatment >= 2) {
+    # Calculate Log2FC
+    MLE_bound$Log2FC[i] <- rowMeans(MLE_bound[i, MLE_cols_to_normalize[5:8]], na.rm = TRUE) -
+                              rowMeans(MLE_bound[i, MLE_cols_to_normalize[1:4]], na.rm = TRUE)
+  }
+}
+
+## Function to calculate p value
+calculate_pvalue <- function(row, paired=TRUE) {
+  plus_HA_values <- row[5:8]
+  no_HA_values <- row[1:4]
+  
+  # Ensure we have sufficient non-NA observations in both subsets
+  if(sum(!is.na(plus_HA_values)) >= 3 && sum(!is.na(no_HA_values)) >= 3) {
+    if(paired) {
+      test_result <- t.test(no_HA_values, plus_HA_values, paired = TRUE)
+      return(test_result$p.value)
+    } else {
+      test_result <- t.test(no_HA_values, plus_HA_values)
+      return(test_result$p.value)
+    }
+  } else {
+    return(NA)
+  }
+}
+
+# Calculate p value for the bound
+MLE_bound$p_value <- apply(MLE_bound[MLE_cols_to_normalize], 1, calculate_pvalue)
+
+# Adjusted p value
+MLE_bound$adj_p_value <- p.adjust(MLE_bound$p_value, method = "BH")
+
+
+```
+
+
+## CVs
+## using non log2 transformed values
+```{r}
+
+# Function to compute CV
+compute_cv <- function(df, columns) {
+  mean_value <- rowMeans(df[columns], na.rm = TRUE)
+  sd_value <- apply(df[columns], 1, sd, na.rm = TRUE)
+  return(100 * (sd_value / mean_value))
+}
+
+# Convert log2 values back to their original scale
+MLE_unbound_non_log <- MLE_unbound
+MLE_unbound_non_log[c("no_HA_1", "no_HA_2", "no_HA_3", "no_HA_4", "plus_HA_1", "plus_HA_2", "plus_HA_3", "plus_HA_4")] <- 2^MLE_unbound[c("no_HA_1", "no_HA_2", "no_HA_3", "no_HA_4", "plus_HA_1", "plus_HA_2", "plus_HA_3", "plus_HA_4")]
+
+MLE_bound_non_log <- MLE_bound
+MLE_bound_non_log[c("no_HA_1", "no_HA_2", "no_HA_3", "no_HA_4", "plus_HA_1", "plus_HA_2", "plus_HA_3", "plus_HA_4")] <- 2^MLE_bound[c("no_HA_1", "no_HA_2", "no_HA_3", "no_HA_4", "plus_HA_1", "plus_HA_2", "plus_HA_3", "plus_HA_4")]
+
+# Compute CV for MLE_unbound using non-log2 transformed values
+MLE_unbound$CV_no_HA <- compute_cv(MLE_unbound_non_log, c("no_HA_1", "no_HA_2", "no_HA_3", "no_HA_4"))
+MLE_unbound$CV_plus_HA <- compute_cv(MLE_unbound_non_log, c("plus_HA_1", "plus_HA_2", "plus_HA_3", "plus_HA_4"))
+
+# Compute CV for MLE_bound using non-log2 transformed values
+MLE_bound$CV_no_HA <- compute_cv(MLE_bound_non_log, c("no_HA_1", "no_HA_2", "no_HA_3", "no_HA_4"))
+MLE_bound$CV_plus_HA <- compute_cv(MLE_bound_non_log, c("plus_HA_1", "plus_HA_2", "plus_HA_3", "plus_HA_4"))
+
+rm(MLE_bound_non_log)
+
+```
+
+
+
+## Visualization of the CV
+## Defining ggplot theme
+
+```{r}
+
+# Define custom theme
+my_theme <- theme(
+  axis.line = element_line(colour = "black", size = 1),
+  axis.text.x = element_text(size = 20),
+  axis.text.y = element_text(size = 24),
+  axis.title.x = element_text(size = 20),
+  axis.title.y = element_text(size = 20),
+  plot.title = element_text(size = 24, hjust = 0.5)
+)
+
+##### Visualization of the CVs
+
+# specify that rename and select functions should be used from dplyr
+# this is necessary because later packages were masking rename from dplyr
+rename <- dplyr::rename
+select <- dplyr::select
+
+# Reshape MLE_unbound for ggplot
+flow_long <- MLE_unbound %>%
+  select(Index, CV_no_HA, CV_plus_HA) %>%
+  gather(key = "Condition", value = "CV", -Index)
+flow_long$type <- "Unbound"
+
+# Reshape MLE_bound for ggplot
+bound_long <- MLE_bound %>%
+  select(Index, CV_no_HA, CV_plus_HA) %>%
+  gather(key = "Condition", value = "CV", -Index)
+bound_long$type <- "Bound"  # Capitalize "Bound" here
+
+# Combining the datasets
+MLE_CV_combined <- rbind(flow_long, bound_long)
+
+# Set the order of the levels for type
+MLE_CV_combined$type <- factor(MLE_CV_combined$type, levels = c("Unbound", "Bound"))
+
+# Use my_theme and then make adjustments specific to this plot
+MLE_plot <- ggplot(MLE_CV_combined, aes(x = type, y = CV, fill = type)) +
+  geom_boxplot() +
+  scale_fill_manual(values = c("Unbound" = "green", "Bound" = "maroon1")) +  # Ensure colors match the capitalized "Bound"
+  coord_cartesian(ylim = c(0, 100)) +
+  labs(
+    title = "Coefficient of Variation - MLE12", 
+    y = "CV (%)",
+    x = NULL  # This omits the x-axis label
+  ) +
+  my_theme +  # Use the custom theme
+  theme(
+        legend.position = "none"  # Remove legend
+        # Note: axis.text.x, axis.text.y, and axis.line are already set by my_theme
+  )
+
+# Print the CV boxplot
+print(MLE_plot)
+
+# Save the plot to a PDF
+ggsave(filename = "MLE_CV_boxplot.pdf", plot = MLE_plot, width = 7, height = 5)
+
+# Calculate median CV for each type
+MLE_median_CVs <- MLE_CV_combined %>%
+  group_by(type) %>%
+  summarise(MLE_median_CV = median(CV, na.rm = TRUE))
+
+# Print the median CVs to console
+print(MLE_median_CVs)
+
+# remove dataframes
+rm(flow_long)
+rm(bound_long)
+
+```
+
+
+
+# Assigning acylated_high_prob, acylated_low_prob and not_acylated
+# Multi site data - Unique Peptides
+```{r}
+
+# Add a new column 'assignment' based on the conditions
+MLE_bound$assignment <- case_when(
+  (MLE_bound$Log2FC > 0.59 & MLE_bound$adj_p_value <= 0.05) ~ "acylated_high_prob",
+  (MLE_bound$Log2FC > 0.59 & MLE_bound$adj_p_value > 0.05) ~ "acylated_low_prob",
+  (MLE_bound$Log2FC < 0.59) ~ "not_acylated"
+)
+
+table(MLE_bound$assignment)
+
+```
+
+
+## Split the multi site data into single sites
+```{r}
+
+# Split up the multi site row into (sometimes) multiple single site rows
+MLE_bound <- MLE_bound %>%
+  # Create a new column with the part of 'Index' after the first underscore
+  mutate(after_underscore = sub("^[^_]*_", "", Index)) %>%
+  # Extract cysteine sites from the new column
+  mutate(cys_raw = str_extract_all(after_underscore, "C\\d+")) %>%
+  unnest_longer(cys_raw) %>%
+  # Extract just the numbers following 'C' for the 'cys_experiment' column
+  mutate(cys_experiment = as.numeric(str_extract(cys_raw, "\\d+"))) %>%
+  select(-cys_raw, -after_underscore) %>%
+  # Reorder 'cys_experiment' to the 2nd column position
+  relocate(cys_experiment, .after = Index) %>%
+  # Remove the 'Index' column
+  select(-Index) %>%
+  # Rename 'ProteinID' to 'Index'
+  rename(Index = ProteinID) %>%
+  # Move 'Index' column to the first position
+  relocate(Index)
+
+
+# Print the assignment table after splitting into single sites
+table(MLE_bound$assignment)
+
+```
+
+
+## Matching to Uniprot
+```{r}
+
+## Import the uniprot dataframe that has all mouse lipidation proteins
+uniprot_mouse_lipidation <- read_csv("../uniprot_mouse_lipidation.csv")
+
+### Extract the lipidation data each into a new row based on each Cys that is palmitoylated in uniprot
+# Extract all instances of 'LIPID X' where X is followed by /note="S-palmitoyl
+uniprot_mouse_lipidation <- uniprot_mouse_lipidation %>%
+  mutate(pos = str_extract_all(Lipidation, "(?<=LIPID )\\d+(?=; /note=\"S-palmitoyl)")) %>%
+  unnest(pos)
+
+# Convert pos to numeric
+uniprot_mouse_lipidation$pos <- as.numeric(uniprot_mouse_lipidation$pos)
+
+# Initialize the new column
+MLE_bound$uniprot_match <- "no"
+
+# Loop over each row of MLE_bound
+for (i in 1:nrow(MLE_bound)) {
+  # Check if there's a match in uniprot_mouse_lipidation
+  match_index <- which(uniprot_mouse_lipidation$Entry == MLE_bound$Index[i] & 
+                       uniprot_mouse_lipidation$pos == MLE_bound$cys_experiment[i])
+  if (length(match_index) > 0) {
+    MLE_bound$uniprot_match[i] <- "yes"
+  }
+}
+
+```
+
+
+# Matching to SwissPalm
+```{r}
+
+##### Swisspalm matching with experimental sites
+
+# Import Swisspalm data for all sites in their database
+library(readr)
+swisspalm_all <- read_csv("../swisspalm_all.csv", 
+    skip = 4)
+
+# Filter swisspalm for validated sites in mouse
+# Rename the DataFrame
+swisspalm_all_mouse <- swisspalm_all
+
+# Filter rows based on criteria
+swisspalm_all_mouse <- swisspalm_all_mouse %>%
+  filter(organism == 'Mus musculus' | study_organism == 'Mus musculus')
+
+# Rename the filtered data frame
+swisspalm_all_mouse_validated <- swisspalm_all_mouse
+
+# Filter swisspalm for large scale = No
+swisspalm_all_mouse_validated <- swisspalm_all_mouse_validated %>% filter(large_scale == "No")
+
+## Filtered based on experimental technique - NOT USING
+# Filter rows where site_techniques contains "Point" or "palmitic"
+# swisspalm_all_mouse_validated <- swisspalm_all_mouse_validated %>%
+#  filter(grepl("Point", site_techniques) | grepl("palmitic", site_techniques))
+
+##### Determine number of unique proteins and sites present when adding swisspalm_validated and uniprot together
+# Total protein and site data in experimentally confirmed
+# Find the unique entries across both data frames
+experimentally_validated_unique_entries_across_both <- union(uniprot_mouse_lipidation$Entry, swisspalm_all_mouse_validated$uniprot_ac)
+
+# Count the number of unique entries
+experimentally_validated_unique_proteins <- length(experimentally_validated_unique_entries_across_both)
+
+# Print the result to the console
+cat("Total number of unique S-palmitoylated proteins uniprot and small scale Swisspalm data:", experimentally_validated_unique_proteins, "\n")
+
+## Unique sites between the two datasets
+
+# Create temporary vectors that contain the unique key combinations for each data frame
+unique_key_uniprot <- paste(uniprot_mouse_lipidation$Entry, uniprot_mouse_lipidation$pos, sep = "_")
+unique_key_swisspalm <- paste(swisspalm_all_mouse_validated$uniprot_ac, swisspalm_all_mouse_validated$pos, sep = "_")
+
+# Find the unique entries (combinations of UniProt Accession and position) across both temporary vectors
+unique_sites_across_both <- union(unique_key_uniprot, unique_key_swisspalm)
+
+# Count the number of unique entries (combinations)
+num_unique_sites <- length(unique_sites_across_both)
+
+# Print the result to the console
+cat("Total number of unique Cys Sites between Uniprot and small scale Swisspalm data:", num_unique_sites, "\n")
+
+# Initialize the new column
+MLE_bound$swisspalm_all_match <- "no"
+
+# Loop over each row of MLE_bound
+for (i in 1:nrow(MLE_bound)) {
+  # Check if there's a match in swisspalm_all_mouse
+  match_index <- which(swisspalm_all_mouse$uniprot_ac == MLE_bound$Index[i] & 
+                       swisspalm_all_mouse$pos == MLE_bound$cys_experiment[i])
+  if (length(match_index) > 0) {
+    MLE_bound$swisspalm_all_match[i] <- "yes"
+  }
+}
+
+# Initialize the new column
+MLE_bound$swisspalm_validated_match <- "no"
+
+# Loop over each row of MLE_bound
+for (i in 1:nrow(MLE_bound)) {
+  # Check if there's a match in swisspalm_all_mouse_validated
+  match_index_validated <- which(swisspalm_all_mouse_validated$uniprot_ac == MLE_bound$Index[i] & 
+                       swisspalm_all_mouse_validated$pos == MLE_bound$cys_experiment[i])
+  if (length(match_index_validated) > 0) {
+    MLE_bound$swisspalm_validated_match[i] <- "yes"
+  }
+}
+
+# Initialize the new column with "unique"
+MLE_bound$database_site_match <- "unique"
+
+# Update the column based on conditions
+MLE_bound <- MLE_bound %>%
+  mutate(
+    database_site_match = case_when(
+      (uniprot_match == "yes" | swisspalm_validated_match == "yes") ~ "experimentally_validated",
+      (uniprot_match == "no" & swisspalm_validated_match == "no" & swisspalm_all_match == "yes") ~ "swisspalm",
+      TRUE ~ "unique"  # Default value, if none of the above conditions are met
+    )
+  )
+
+```
+
+
+# Statistics for SITE matches to the databases uniprot and swisspalm
+```{r}
+
+# Create a new dataframe where 'both' is considered as separate instances for 'uniprot' and 'swisspalm'
+MLE_validated_count <- nrow(filter(MLE_bound, database_site_match == "experimentally_validated"))
+MLE_swisspalm_count <- nrow(filter(MLE_bound, database_site_match == "swisspalm"))
+MLE_unique_count <- nrow(filter(MLE_bound, database_site_match == "unique"))
+
+# Print the counts with labels
+cat("Count for Experimentally Validated:", MLE_validated_count, "\n")
+cat("Count for SwissPalm:", MLE_swisspalm_count, "\n")
+cat("Count for Unique:", MLE_unique_count, "\n")
+
+#### Plotting database_site_match counts based on experimental assignment
+# Define the order and colors of the assignment categories
+assignment_order <- c("not_acylated", "acylated_low_prob", "acylated_high_prob")
+assignment_colors <- c("not_acylated" = "red", "acylated_low_prob" = "orange", "acylated_high_prob" = "blue")
+
+# Plot for "experimentally_validated"
+MLE_exp_validated_plot <- ggplot(filter(MLE_bound, database_site_match == "experimentally_validated"), aes(x = assignment, fill = assignment)) +
+  geom_bar() +
+  scale_x_discrete(limits = assignment_order) +
+  scale_fill_manual(values = assignment_colors) +
+  ylab("Site Matches") +
+  xlab("Assignment") +
+  ggtitle(paste("Experimentally Validated - ", MLE_validated_count)) +
+  my_theme
+
+# Save the plot as PDF
+ggsave("MLE_experimentally_validated_plot.pdf", MLE_exp_validated_plot)
+
+# Plot for "swisspalm"
+MLE_swisspalm_plot <-ggplot(filter(MLE_bound, database_site_match == "swisspalm"), aes(x = assignment, fill = assignment)) +
+  geom_bar() +
+  scale_x_discrete(limits = assignment_order) +
+  scale_fill_manual(values = assignment_colors) +
+  ylab("Site Matches") +
+  xlab("Assignment") +
+  ggtitle(paste("SwissPalm - ", MLE_swisspalm_count)) +
+  my_theme
+
+# Save the plot as PDF
+ggsave("MLE_swisspalm_plot.pdf", MLE_swisspalm_plot)
+
+# Plot for "unique"
+MLE_unique_plot <- ggplot(filter(MLE_bound, database_site_match == "unique"), aes(x = assignment, fill = assignment)) +
+  geom_bar() +
+  scale_x_discrete(limits = assignment_order) +
+  scale_fill_manual(values = assignment_colors) +
+  ylab("Site Matches") +
+  xlab("Assignment") +
+  ggtitle(paste("Unique - ", MLE_unique_count)) +
+  my_theme
+
+# Save the plot as PDF
+ggsave("MLE_unique_plot.pdf", MLE_unique_plot)
+
+# print the plots
+print(MLE_exp_validated_plot)
+print(MLE_swisspalm_plot)
+print(MLE_unique_plot)
+
+```
+
+
+# Volcano Plot
+# Coloring by assignment
+```{r}
+
+
+# Define custom theme
+my_theme <- theme(
+  axis.line = element_line(colour = "black", size = 1),
+  axis.text.y = element_text(size = 24),
+  axis.title.y = element_text(size = 18),
+  axis.text.x = element_text(size = 24),
+  axis.title.x = element_text(size = 18),
+  plot.title = element_text(size = 22, hjust = 0.5),
+  legend.position = "none",       # Remove legend
+)
+
+library(ggplot2)
+
+# Calculate negative log10 p-value for both datasets and add a 'Type' column
+MLE_bound$neg_log10_p_value <- -log10(MLE_bound$p_value)
+MLE_bound$type <- "bound"
+
+MLE_unbound$neg_log10_p_value <- -log10(MLE_unbound$p_value)
+MLE_unbound$type <- "unbound"
+
+# Create the ggplot object for the combined plot
+MLE_combined_volcano_plot <- ggplot() +
+  aes(x=Log2FC, y=neg_log10_p_value) +
+  coord_cartesian(xlim = c(-3.5, 10.5)) +
+  
+  # Add points for MLE_bound
+  geom_point(data = MLE_bound, aes(color = assignment), size = 1, alpha = 0.5, na.rm = TRUE) +
+  
+  # Add points for MLE_unbound
+  geom_point(data = MLE_unbound, color = "green", size = 1, alpha = 0.5, na.rm = TRUE) +
+  
+  # Customize the color for assignment
+  scale_color_manual(values = c("not_acylated" = "red", "acylated_low_prob" = "orange", "acylated_high_prob" = "blue")) +
+  
+  # Apply custom theme
+  my_theme +
+  
+   # Add titles
+  labs(x = "Log2 FC -/+ NH2OH", y = "- Log10 p-value", title = "Acyl-Trap of Mouse MLE")
+
+# Display the plot
+print(MLE_combined_volcano_plot)
+
+```
+
+## Volcano
+## Unbound as inset plot
+```{r}
+
+library(ggplot2)
+library(cowplot)
+
+# Custom theme
+my_theme <- theme(
+  axis.line = element_line(colour = "black", size = 1),
+  axis.text.y = element_text(size = 24),
+  axis.title.y = element_text(size = 18),
+  axis.text.x = element_text(size = 24),
+  axis.title.x = element_text(size = 18),
+  plot.title = element_text(size = 22, hjust = 0.5),
+  legend.position = "none"       # Remove legend
+)
+
+# Calculate negative log10 p-value
+MLE_bound$neg_log10_p_value <- -log10(MLE_bound$p_value)
+MLE_unbound$neg_log10_p_value <- -log10(MLE_unbound$p_value)
+
+# Create and display the ggplot object for MLE_bound
+MLE_bound_plot <- ggplot(data=MLE_bound, aes(x=Log2FC, y=neg_log10_p_value, color=assignment)) +
+  geom_point(size = 1, alpha = 0.5, na.rm = TRUE) +
+  coord_cartesian(xlim = c(-6, 6)) +
+  scale_color_manual(values = c("not_acylated" = "red", "acylated_low_prob" = "orange", "acylated_high_prob" = "blue")) +
+  my_theme +
+  labs(x = "Log2 FC -/+ NH2OH", y = "- Log10 p-value")
+
+print(MLE_bound_plot)
+
+# Create and display the ggplot object for MLE_unbound
+MLE_unbound_plot <- ggplot(data=MLE_unbound, aes(x=Log2FC, y=neg_log10_p_value)) +
+  geom_point(color="black", size = 0.5, alpha = 0.3, na.rm = TRUE) +
+  coord_cartesian(xlim = c(-6, 6), ylim = c(0, 6)) +  # Set x- and y-axis limits
+  theme(
+    axis.line = element_line(colour = "black", size = 1),
+    axis.text.y = element_text(size = 10),     # restored y axis labels
+    axis.text.x = element_text(size = 10),     # restored x axis labels
+    axis.title.x = element_blank(),             # Remove x axis title
+    axis.title.y = element_blank(),             # Remove y axis title
+    legend.position = "none",                   # Remove legend
+    plot.title = element_text(size = 12, hjust = 0.5)   # Set plot title size and alignment
+  ) +
+  labs(title = "Unbound")  # Add plot title
+
+
+print(MLE_unbound_plot)
+
+# Combine plots
+MLE_combined_plot <- ggdraw(MLE_bound_plot) + 
+  draw_plot(MLE_unbound_plot, x = 0.12, y = 0.22, width = 0.3, height = 0.5)
+
+# Display the combined plot
+print(MLE_combined_plot)
+
+# save the plot to pdf
+ggsave(filename="MLE_volcano.pdf", plot=MLE_combined_plot, width=6, height=4)
+
+# print the values for each assignment to console
+table(MLE_bound$assignment)
+
+
+```
+
+
+
+## Volcano plots based on Database match
+## Experimentally Confirmed on a volcano plot
+
+```{r}
+
+library(ggplot2)
+library(dplyr)
+library(ggrepel)
+
+# Custom theme
+my_theme <- theme(
+  axis.line = element_line(colour = "black", size = 1),
+  axis.text.y = element_text(size = 24),
+  axis.title.y = element_text(size = 18),
+  axis.text.x = element_text(size = 24),
+  axis.title.x = element_text(size = 18),
+  plot.title = element_text(size = 22, hjust = 0.5),
+  legend.position = "none"       # Remove legend
+)
+
+# Filter the data
+MLE_filtered_data <- MLE_bound[MLE_bound$database_site_match %in% c("experimentally_validated", "swisspalm", "unique"), ]
+
+# Filter data for unique database_site_match, non-NA adj_p_value < 0.05
+MLE_top_genes <- MLE_bound %>%
+  filter(database_site_match == "unique" & !is.na(adj_p_value) & adj_p_value < 0.05) %>%
+  arrange(desc(Log2FC)) %>%
+  head(15) %>%
+  select(Gene, cys_experiment, Log2FC, neg_log10_p_value)
+
+# Extract only experimentally_validated data for labeling
+MLE_label_data_exp_validated <- MLE_filtered_data[MLE_filtered_data$database_site_match == "experimentally_validated", ]
+
+# Calculate maximum and minimum values for x and y for the limits of the plot
+x_limits <- range(MLE_filtered_data$Log2FC, na.rm = TRUE)
+y_limits <- range(MLE_filtered_data$neg_log10_p_value, na.rm = TRUE)
+
+# Define nudge values based on the range of data; increasing the factor for more separation
+x_nudge_exp_validated <- diff(x_limits) * 0.35  # Push further to the left
+x_nudge_top_genes <- diff(x_limits) * 0.35      # Push further to the right
+
+MLE_volcano_database <- ggplot(MLE_filtered_data, aes(x = Log2FC, y = neg_log10_p_value, color = database_site_match)) +
+  
+  # Scatter plot for swisspalm and remaining unique points (excluding MLE_top_genes)
+  geom_point(data = subset(MLE_filtered_data, !(Gene %in% MLE_top_genes$Gene & cys_experiment %in% MLE_top_genes$cys_experiment) & database_site_match != "experimentally_validated"),
+             aes(shape = database_site_match), alpha = 0.4, size = 1.2) +
+
+  # Scatter plot for experimentally_validated points
+  geom_point(data = subset(MLE_filtered_data, database_site_match == "experimentally_validated"),
+             aes(shape = database_site_match), alpha = 1.0, size = 2) +
+
+  # Scatter plot for MLE_top_genes points as triangles
+  geom_point(data = MLE_top_genes, 
+             aes(shape = "MLE_top_genes"), color = "grey1", alpha = 1.0, size = 2) +
+
+  # Label the experimentally_validated points with geom_label_repel
+  geom_label_repel(data = MLE_label_data_exp_validated,
+                   aes(label = paste(Gene, cys_experiment, sep = "_"), color = database_site_match),
+                   nudge_x = -x_nudge_exp_validated,  # Using specific nudge for experimentally_validated
+                   size = 3, box.padding = 0.35, point.padding = 0.5, segment.color = 'grey50') +
+
+  # Label the MLE_top_genes with geom_label_repel using MLE_top_genes directly
+  geom_label_repel(data = MLE_top_genes,
+                   aes(label = paste(Gene, cys_experiment, sep = "_"), color = "unique"),
+                   nudge_x = x_nudge_top_genes,       # Using specific nudge for top_genes
+                   size = 3, box.padding = 0.35, point.padding = 0.5, segment.color = 'grey50') +
+
+  # Expand limits to ensure labels don't get cut off
+  coord_cartesian(xlim = c(x_limits[1] - x_nudge_exp_validated, x_limits[2] + x_nudge_top_genes),
+                  ylim = c(y_limits[1], y_limits[2])) +
+  
+  # Color settings
+  # scale_color_manual(values = c("experimentally_validated" = "#FFA500", "swisspalm" = "#008080", "unique" = "#800080")) +
+  # scale_color_manual(values = c("experimentally_validated" = "purple", "swisspalm" = "gold2", "unique" = "green3")) +
+  scale_color_manual(values = c("experimentally_validated" = "purple", "swisspalm" = "#008080", "unique" = "grey1")) +
+  
+  # Shape settings
+  scale_shape_manual(values = c("experimentally_validated" = 17, "swisspalm" = 16, "unique" = 16, "MLE_top_genes" = 17)) +  # Added MLE_top_genes as triangles
+  
+  labs(title = "MLE: Database Matching",
+       x = "Log2 FC -/+ NH2OH",
+       y = "-Log10 p-value") +
+  my_theme
+
+print(MLE_volcano_database)
+
+# save the plot to pdf
+ggsave(filename="MLE_volcano_database.pdf", plot=MLE_volcano_database, width=6, height=4)
+
+```
+
+
+# Top unique proteins that are putative acylated
+```{r}
+
+library(dplyr)
+
+# Filter data for unique database_site_match, non-NA adj_p_value < 0.05
+MLE_top_genes <- MLE_bound %>%
+  filter(database_site_match == "unique" & !is.na(adj_p_value) & adj_p_value < 0.05) %>%
+  arrange(desc(Log2FC)) %>%
+  head(15) %>%
+  select(Gene, cys_experiment)
+
+# Print to console
+print(MLE_top_genes)
+
+
+```
+
+
+# Pie charts for database site matches
+```{r}
+
+# My theme for pie chart
+my_theme <- function(title_color = "black") {
+  theme_minimal() +
+    theme(
+      axis.title.x = element_blank(),
+      axis.title.y = element_blank(),
+      axis.text.x = element_blank(),
+      axis.text.y = element_blank(),
+      axis.ticks.x = element_blank(),
+      axis.ticks.y = element_blank(),
+      panel.grid = element_blank(),
+      panel.border = element_blank(),
+      legend.position = "none",             # Remove legend
+      plot.title = element_text(size = 24,  # Font size for title
+                                hjust = 0.5, # Horizontally center the title
+                                margin = margin(t = 0, b = 0), # Adjust the margin of title
+                                color = title_color,  # Set title color
+                                face = "bold"
+                               ),
+      plot.title.position = "plot", # Center title with the plot
+    )
+}
+
+# Function to generate pie chart for given database_site_match category
+create_pie_chart <- function(data, category_name) {
+  subset_data <- data %>% 
+    filter(database_site_match == category_name) %>%
+    filter(!is.na(assignment)) %>%
+    group_by(assignment) %>%
+    summarize(count = n())
+  
+  # Specify titles and title colors based on category_name
+  title_colors <- c("experimentally_validated" = "black", "swisspalm" = "black", "unique" = "black")
+  
+  if (category_name == "experimentally_validated") {
+    plot_title <- "Low Throughput (LTP)"
+  } else if (category_name == "swisspalm") {
+    plot_title <- "High Throughput (HTP)"
+  } else if (category_name == "unique") {
+    plot_title <- "Unique"
+  } else {
+    plot_title <- category_name
+  }
+  
+  ggplot(subset_data, aes(x = "", y = count, fill = assignment)) +
+    geom_bar(stat = "identity", width = 1) +
+    coord_polar(theta = "y") +
+    labs(title = plot_title) +
+    scale_fill_manual(values = c("acylated_high_prob" = "blue", 
+                                 "acylated_low_prob" = "orange", 
+                                 "not_acylated" = "red")) +
+    geom_text(aes(label = count), position = position_stack(vjust = 0.5), color = "white", size = 9) +
+    theme_minimal() +  
+    my_theme(title_colors[[category_name]])  # Pass title color here           
+}
+
+# Create pie charts
+MLE_pie_exp_validated <- create_pie_chart(MLE_bound, "experimentally_validated")
+MLE_pie_swisspalm <- create_pie_chart(MLE_bound, "swisspalm")
+MLE_pie_unique <- create_pie_chart(MLE_bound, "unique")
+
+# Print pie charts
+print(MLE_pie_exp_validated)
+print(MLE_pie_swisspalm)
+print(MLE_pie_unique)
+
+# Save the pie charts to pdf
+ggsave(filename="MLE_pie_exp_validated.pdf", plot=MLE_pie_exp_validated, width=6, height=4)
+ggsave(filename="MLE_pie_swisspalm.pdf", plot=MLE_pie_swisspalm, width=6, height=4)
+ggsave(filename="MLE_pie_unique.pdf", plot=MLE_pie_unique, width=6, height=4)
+
+```
+
+### More statistics on the site matches
+```{r}
+
+## Mean Log2FC and adjusted p value for the experimentally validated site matches
+
+# Filter the dataframe for experimentally_validated and calculate means
+experimentally_validated_means <- MLE_bound %>%
+  filter(database_site_match == "experimentally_validated") %>%
+  summarize(mean_Log2FC = mean(Log2FC, na.rm = TRUE),
+            mean_adj_p_value = mean(adj_p_value, na.rm = TRUE))
+
+# Print the results with a title
+cat("Mean Log2FC and Mean Adjusted P-Value for Experimentally Validated Entries:\n")
+print(experimentally_validated_means)
+
+
+```
+
+
+
+# Remove dataframes no longer needed
+```{r}
+
+rm(ADH1_values)
+rm(MLE_assignment_df)
+rm(MLE_assignment_df_summarized)
+rm(MLE_combined)
+rm(MLE_CV_combined)
+rm(MLE_bound_sub)
+rm(MLE_filtered_bound)
+rm(MLE_unbound_sub)
+rm(MLE_heatmap_data_sorted)
+rm(MLE_heatmap_data_replicates)
+rm(MLE_median_CVs)
+rm(MLE_plot)
+rm(MLE_plot_df)
+rm(MLE_uniprot_plot)
+rm(MLE_unique_plot)
+rm(MLE_volcano_plot)
+rm(bound_long)
+rm(flow_long)
+rm(plot_acylated_low_prob)
+rm(plot_not_acylated)
+rm(plot_acylated_high_prob)
+rm(rows_to_remove)
+rm(swisspalm_and_both)
+rm(uniprot_and_both)
+rm(unique_db)
+rm(volcano_plot)
+
+```
+
+
+
+## Defining gene lists for the GO analyses
+## Define the "acylated_high_prob" gene list
+## Define the "unenriched" gene list = Unbound proteins minus the acylated_high_prob
+## This list is essentially the "unenriched"
+```{r}
+
+# Define the putative acylated
+MLE_acylated_high_prob <- filter(MLE_bound, assignment == "acylated_high_prob")
+
+# Define the acylated_low_prob
+MLE_acylated_low_prob <- filter(MLE_bound, assignment == "acylated_low_prob")
+
+# Define the not_acylated
+MLE_not_acylated <- filter(MLE_bound, assignment == "not_acylated")
+
+# Combine the putative acylated and acylated_low_prob into one data frame
+rows_to_remove <- bind_rows(MLE_acylated_high_prob, MLE_acylated_low_prob) %>%
+  select(Index)
+
+# Create the new dataframe MLE_unenriched by removing these rows from MLE_unbound
+MLE_unenriched <- anti_join(MLE_unbound, rows_to_remove, by = "Index")
+
+```
+
+
+
+# ORA comparing acylated_high_prob with a universal gene list
+```{r}
+
+# Load required libraries
+library(dplyr)
+library(clusterProfiler)
+library(ggplot2)
+library(org.Mm.eg.db)
+
+# Extract unique gene names from the two datasets
+MLE_genes_acylated <- unique(MLE_acylated_high_prob$Gene)
+MLE_genes_not_acylated <- unique(MLE_not_acylated$Gene)
+MLE_genes_unbound <- unique(MLE_unbound$Gene)
+
+# Merge the gene lists to create a comprehensive universe
+MLE_complete_universe <- unique(c(MLE_genes_unbound, MLE_genes_not_acylated, MLE_genes_acylated))
+
+# Perform ORA
+MLE_enrich_result_acylated <- enrichGO(gene = MLE_genes_acylated,
+                                         universe = MLE_complete_universe,
+                                         OrgDb = org.Mm.eg.db,
+                                         keyType = "SYMBOL",
+                                         ont = "ALL",
+                                         pAdjustMethod = "BH",
+                                         pvalueCutoff = 0.05,
+                                         qvalueCutoff = 0.05)
+
+# Access the actual data frame from the result
+MLE_enrich_result_acylated_df <- as.data.frame(MLE_enrich_result_acylated)
+
+# Save results to a file
+write.table(MLE_enrich_result_acylated_df, file = "MLE_enrich_result_acylated.txt", sep = "\t", quote = FALSE, row.names = FALSE, col.names = TRUE)
+
+# Modify the sort_and_plot function for dot plot
+sort_and_plot <- function(df, title) {
+  
+  # Convert GeneRatio to numeric for sorting
+  df$GeneRatioNumeric <- as.numeric(unlist(lapply(strsplit(as.character(df$GeneRatio), "/"), function(x) as.numeric(x[1])/as.numeric(x[2]))))
+  
+  # Sort by GeneRatio and take the top 15 terms
+  df_sorted <- df %>%
+    arrange(desc(GeneRatioNumeric)) %>%
+    head(15)
+  
+  # Dot plot
+  plot <- ggplot(df_sorted, aes(x = reorder(Description, GeneRatioNumeric), y = GeneRatioNumeric)) +
+  geom_point(aes(color = qvalue, size = Count)) +
+  scale_color_gradient(low = "blue", high = "red", name = "qvalue") +
+  scale_size_continuous(name = "Count") +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 14),       # X axis values font size
+    axis.text.y = element_text(size = 10),                              # Y axis values font size
+    axis.title.x = element_text(size = 18),                                     # Remove x-axis title
+    axis.title.y = element_text(size = 18),                             # Y axis title font size
+    plot.title = element_text(size = 16, hjust = 0.5),                  # Main title font size
+    legend.text = element_text(size = 12),
+    legend.title = element_text(size = 14)
+  ) +
+  labs(y = "Gene Ratio", x = NULL, title = title) +                     # NULL removes x label
+  coord_flip() +
+  guides(size = guide_legend(order = 1), color = guide_colorbar(order = 2))
+  
+  # Display the plot (optional)
+  print(plot)
+  
+  # Save the plot to a PDF with the specified name
+  ggsave(filename = "MLE_ORA_GO.pdf", plot = plot)
+}
+  
+# Plot for the complete dataset
+sort_and_plot(MLE_enrich_result_acylated_df, "Top 15 Terms in MLE Acylated Genes")
+
+
+```
+
+
+### MLE with BP, MF and CC separate
+
+```{r}
+
+# Load required libraries
+library(dplyr)
+library(clusterProfiler)
+library(ggplot2)
+library(org.Mm.eg.db)
+
+# Extract unique gene names from the new datasets
+MLE_genes_acylated <- unique(MLE_acylated_high_prob$Gene)
+MLE_genes_not_acylated <- unique(MLE_not_acylated$Gene)
+MLE_genes_unbound <- unique(MLE_unbound$Gene)
+
+# Merge the gene lists to create a comprehensive universe for MLE
+MLE_complete_universe <- unique(c(MLE_genes_unbound, MLE_genes_not_acylated, MLE_genes_acylated))
+
+# Adjusted function to perform ORA and plot for MLE using a given ontology
+perform_ORA_and_plot_MLE <- function(ont) {
+  MLE_enrich_result <- enrichGO(gene = MLE_genes_acylated,
+                                universe = MLE_complete_universe,
+                                OrgDb = org.Mm.eg.db,
+                                keyType = "SYMBOL",
+                                ont = ont,
+                                pAdjustMethod = "BH",
+                                pvalueCutoff = 0.05,
+                                qvalueCutoff = 0.05)
+  
+  # Convert to data frame
+  MLE_enrich_result_df <- as.data.frame(MLE_enrich_result)
+  
+  # Sort and plot function adapted for MLE dot plot
+  sort_and_plot_MLE <- function(df, title) {
+    df$GeneRatioNumeric <- as.numeric(unlist(lapply(strsplit(as.character(df$GeneRatio), "/"), function(x) as.numeric(x[1])/as.numeric(x[2]))))
+    df_sorted <- df %>%
+      arrange(desc(GeneRatioNumeric)) %>%
+      head(15)
+    
+    plot <- ggplot(df_sorted, aes(x = reorder(Description, GeneRatioNumeric), y = GeneRatioNumeric)) +
+      geom_point(aes(color = qvalue, size = Count)) +
+      scale_color_gradient(low = "blue", high = "red", name = "qvalue") +
+      scale_size_continuous(name = "Count") +
+      theme(
+        axis.text.x = element_text(angle = 45, hjust = 1, size = 14),
+        axis.text.y = element_text(size = 10),
+        axis.title.x = element_blank(), # Remove x-axis title
+        axis.title.y = element_text(size = 18),
+        plot.title = element_text(size = 16, hjust = 0.5),
+        legend.text = element_text(size = 12),
+        legend.title = element_text(size = 14)
+      ) +
+      labs(y = "Gene Ratio", title = title) +
+      coord_flip() +
+      guides(size = guide_legend(order = 1), color = guide_colorbar(order = 2))
+    
+    print(plot)
+    
+    # Save the plot to a PDF with a dynamic file name based on ontology
+    ggsave(filename = paste("MLE_ORA_GO_", ont, ".pdf", sep = ""), plot = plot, width = 11, height = 8)
+  }
+  
+  # Call the plotting function for MLE
+  sort_and_plot_MLE(MLE_enrich_result_df, paste("Top 15 Terms in MLE Acylated Genes -", ont))
+}
+
+# List of ontologies to analyze and plot for MLE
+ont_list <- c("BP", "CC", "MF")
+
+# Loop through each ontology and perform ORA and plotting for MLE
+for(ont in ont_list) {
+  perform_ORA_and_plot_MLE(ont)
+}
+
+
+```
+
+
+######## Combined Brain and MLE for purposes of database matching ########
+## Perform database matching on the combined dataset (MLE12 + Brain)
+
+```{r}
+
+## Combine the brain and MLE12 Bound data
+# Add a new column "sample_type" to each dataframe before combining
+brain_bound$sample_type <- "brain"
+MLE_bound$sample_type <- "MLE"
+
+# Combine the Bound dataframes by rows
+combined_bound <- rbind(brain_bound, MLE_bound)
+
+## Combine the brain and MLE12 Unbound data
+# Add a new column "sample_type" to each dataframe before combining
+brain_unbound$sample_type <- "brain"
+MLE_unbound$sample_type <- "MLE"
+
+# Combine the Unbound dataframes by rows
+combined_unbound <- rbind(brain_unbound, MLE_unbound)
+
+```
+
+
+## Volcano plots based on Database match
+## Experimentally Confirmed on a volcano plot
+
+```{r}
+
+library(ggplot2)
+library(dplyr)
+library(ggrepel)
+
+# Custom theme
+my_theme <- theme(
+  axis.line = element_line(colour = "black", size = 1),
+  axis.text.y = element_text(size = 24),
+  axis.title.y = element_text(size = 18),
+  axis.text.x = element_text(size = 24),
+  axis.title.x = element_text(size = 18),
+  plot.title = element_text(size = 22, hjust = 0.5),
+  legend.position = "none"       # Remove legend
+)
+
+# Filter the data
+combined_filtered_data <- combined_bound[combined_bound$database_site_match %in% c("experimentally_validated", "swisspalm", "unique"), ]
+
+# Filter data for unique database_site_match, non-NA adj_p_value < 0.05
+combined_top_genes <- combined_bound %>%
+  filter(database_site_match == "unique" & !is.na(adj_p_value) & adj_p_value < 0.05) %>%
+  arrange(desc(Log2FC)) %>%
+  head(15) %>%
+  select(Gene, cys_experiment, Log2FC, neg_log10_p_value)
+
+# Extract only experimentally_validated data for labeling
+combined_label_data_exp_validated <- combined_filtered_data[combined_filtered_data$database_site_match == "experimentally_validated", ]
+
+# Calculate maximum and minimum values for x and y for the limits of the plot
+x_limits <- range(combined_filtered_data$Log2FC, na.rm = TRUE)
+y_limits <- range(combined_filtered_data$neg_log10_p_value, na.rm = TRUE)
+
+# Define nudge values based on the range of data; increasing the factor for more separation
+x_nudge_exp_validated <- diff(x_limits) * 0.35  # Push further to the left
+x_nudge_top_genes <- diff(x_limits) * 0.35      # Push further to the right
+
+combined_volcano_database <- ggplot(combined_filtered_data, aes(x = Log2FC, y = neg_log10_p_value, color = database_site_match)) +
+  
+  # Scatter plot for swisspalm and remaining unique points (excluding combined_top_genes)
+  geom_point(data = subset(combined_filtered_data, !(Gene %in% combined_top_genes$Gene & cys_experiment %in% combined_top_genes$cys_experiment) & database_site_match != "experimentally_validated"),
+             aes(shape = database_site_match), alpha = 0.4, size = 1.2) +
+
+  # Scatter plot for experimentally_validated points
+  geom_point(data = subset(combined_filtered_data, database_site_match == "experimentally_validated"),
+             aes(shape = database_site_match), alpha = 1.0, size = 2) +
+
+  # Scatter plot for combined_top_genes points as triangles
+  geom_point(data = combined_top_genes, 
+             aes(shape = "combined_top_genes"), color = "grey1", alpha = 1.0, size = 2) +
+
+  # Label the experimentally_validated points with geom_label_repel
+  geom_label_repel(data = combined_label_data_exp_validated,
+                   aes(label = paste(Gene, cys_experiment, sep = "_"), color = database_site_match),
+                   nudge_x = -x_nudge_exp_validated,  # Using specific nudge for experimentally_validated
+                   size = 3, box.padding = 0.35, point.padding = 0.5, segment.color = 'grey50') +
+
+  # Label the combined_top_genes with geom_label_repel using combined_top_genes directly
+  geom_label_repel(data = combined_top_genes,
+                   aes(label = paste(Gene, cys_experiment, sep = "_"), color = "unique"),
+                   nudge_x = x_nudge_top_genes,       # Using specific nudge for top_genes
+                   size = 3, box.padding = 0.35, point.padding = 0.5, segment.color = 'grey50') +
+
+  # Expand limits to ensure labels don't get cut off
+  coord_cartesian(xlim = c(x_limits[1] - x_nudge_exp_validated, x_limits[2] + x_nudge_top_genes),
+                  ylim = c(y_limits[1], y_limits[2])) +
+  
+  # Color settings
+  # scale_color_manual(values = c("experimentally_validated" = "#FFA500", "swisspalm" = "#008080", "unique" = "#800080")) +
+  # scale_color_manual(values = c("experimentally_validated" = "purple", "swisspalm" = "gold2", "unique" = "green3")) +
+  scale_color_manual(values = c("experimentally_validated" = "purple", "swisspalm" = "#008080", "unique" = "grey1")) +
+  
+  # Shape settings
+  scale_shape_manual(values = c("experimentally_validated" = 17, "swisspalm" = 16, "unique" = 16, "combined_top_genes" = 17)) +  # Added combined_top_genes as triangles
+  
+  labs(title = "Combined Brain + MLE12: Database Matching",
+       x = "Log2 FC -/+ NH2OH",
+       y = "-Log10 p-value") +
+  my_theme
+
+print(combined_volcano_database)
+
+# save the plot to pdf
+ggsave(filename="combined_volcano_database.pdf", plot=combined_volcano_database, width=6, height=4)
+
+
+
+```
+
+# Plotting unique sites sites of interest (discovery of putative novel S-acyl sites)
+```{r}
+
+library(ggplot2)
+library(dplyr)
+library(ggrepel)
+
+# Custom theme
+my_theme <- theme(
+  axis.line = element_line(colour = "black", size = 1),
+  axis.text.y = element_text(size = 24),
+  axis.title.y = element_text(size = 18),
+  axis.text.x = element_text(size = 24),
+  axis.title.x = element_text(size = 18),
+  plot.title = element_text(size = 22, hjust = 0.5),
+  legend.position = "none"       # Remove legend
+)
+
+
+# Filter only experimentally_validated data
+experimentally_validated_data <- combined_bound %>%
+  filter(database_site_match == "experimentally_validated")
+
+# Update the filtering to include the new specified row with the correct label
+specified_data_updated <- combined_bound %>%
+  filter((Index == "P35762" & cys_experiment == 6) |
+         (Index == "Q8BWS5" & cys_experiment == 752) |
+         (Index == "Q6PHZ8" & cys_experiment == 43) |
+         (Index == "Q9QXW9" & cys_experiment == 474) |
+         (Index == "Q3TJD7" & cys_experiment == 329) |
+         (Index == "Q8VCN6" & cys_experiment == 166 & sample_type == "MLE") |
+         (Index == "Q99N57" & cys_experiment == 637) |
+         (Index == "Q91ZN5" & cys_experiment == 80) | # Previously added
+         (Index == "Q91VE0" & cys_experiment == 436) | # New addition
+         (Index == "Q8R0S2" & cys_experiment == 960)) %>% # New addition
+  mutate(
+    label = case_when(
+      Index == "P35762" & cys_experiment == 6 ~ "CD81_C6",
+      Index == "Q8BWS5" & cys_experiment == 752 ~ "Gprin3_C752/753",
+      Index == "Q6PHZ8" & cys_experiment == 43 ~ "Kcnip4_C43",
+      Index == "Q9QXW9" & cys_experiment == 474 ~ "Slc7a8_C474",
+      Index == "Q3TJD7" & cys_experiment == 329 ~ "Pdlim7_C329/332",
+      Index == "Q8VCN6" & cys_experiment == 166 & sample_type == "MLE" ~ "CD99_C166",
+      Index == "Q99N57" & cys_experiment == 637 ~ "Raf1_C637",
+      Index == "Q91ZN5" & cys_experiment == 80 ~ "Slc35b2_C80", # Updated label
+      Index == "Q91VE0" & cys_experiment == 436 ~ "Slc27a4_C436/439", # New label
+      Index == "Q8R0S2" & cys_experiment == 960 ~ "Iqsec1_C960", # New label
+      TRUE ~ NA_character_
+    ),
+    color = case_when(
+      sample_type == "brain" ~ "#008080", # Teal for brain
+      sample_type == "MLE" ~ "purple",    # Purple for MLE
+      TRUE ~ "black"                      # Default color
+    )
+  )
+
+# Proceed with the plot generation as previously shown
+combined_volcano_plot <- ggplot(specified_data_updated, aes(x = Log2FC, y = neg_log10_p_value, color = color)) +
+  geom_point(alpha = 1.0, size = 2) +
+  geom_label_repel(
+    aes(label = label),
+    box.padding = 1, point.padding = 1, segment.color = 'grey50',
+    nudge_x = 0.25, nudge_y = 0.25, size = 4, direction = "y", max.iter = 10000
+  ) +
+  scale_color_identity() + # Use actual colors specified in the 'color' column
+  xlim(-2, 8) + # Adjusted x-axis limits from -2 to +8
+  ylim(0, 6) + # Set y-axis limits from 0 to 6
+  labs(title = "Volcano Plot: Specified Points",
+       x = "Log2 FC -/+ NH2OH",
+       y = "-Log10 p-value") +
+  my_theme +
+  theme(legend.position = "none")
+
+print(combined_volcano_plot)
+
+
+```
+
+
+# Plot with experimentally_validated and putative novel sites
+```{r}
+
+
+library(ggplot2)
+library(dplyr)
+library(ggrepel)
+
+# Custom theme
+my_theme <- theme(
+  axis.line = element_line(colour = "black", size = 1),
+  axis.text.y = element_text(size = 24),
+  axis.title.y = element_text(size = 18),
+  axis.text.x = element_text(size = 24),
+  axis.title.x = element_text(size = 18),
+  plot.title = element_text(size = 16, hjust = 0.5),
+  legend.position = "none"       # Remove legend
+)
+
+
+# Filter only experimentally_validated data
+experimentally_validated_data <- combined_bound %>%
+  filter(database_site_match == "experimentally_validated")
+
+# Ensure experimentally_validated data has the same structure (labels, color)
+experimentally_validated_data <- experimentally_validated_data %>%
+  mutate(
+    label = NA, # No label for these points
+    color = "black" # Color experimentally_validated points in black
+  )
+
+# Update the filtering to include the new specified row with the correct label
+specified_data_updated <- combined_bound %>%
+  filter((Index == "P35762" & cys_experiment == 6) |
+         (Index == "Q8BWS5" & cys_experiment == 752) |
+         (Index == "Q6PHZ8" & cys_experiment == 43) |
+         (Index == "Q9QXW9" & cys_experiment == 474) |
+         (Index == "Q3TJD7" & cys_experiment == 329) |
+         (Index == "Q8VCN6" & cys_experiment == 166 & sample_type == "MLE") |
+         (Index == "Q99N57" & cys_experiment == 637) |
+         (Index == "Q91ZN5" & cys_experiment == 80) | # Previously added
+         (Index == "Q91VE0" & cys_experiment == 436) | # New addition
+         (Index == "Q8R0S2" & cys_experiment == 960)) %>% # New addition
+  mutate(
+    label = case_when(
+      Index == "P35762" & cys_experiment == 6 ~ "CD81_C6",
+      Index == "Q8BWS5" & cys_experiment == 752 ~ "Gprin3_C752/753",
+      Index == "Q6PHZ8" & cys_experiment == 43 ~ "Kcnip4_C43",
+      Index == "Q9QXW9" & cys_experiment == 474 ~ "Slc7a8_C474",
+      Index == "Q3TJD7" & cys_experiment == 329 ~ "Pdlim7_C329/332",
+      Index == "Q8VCN6" & cys_experiment == 166 & sample_type == "MLE" ~ "CD99_C166",
+      Index == "Q99N57" & cys_experiment == 637 ~ "Raf1_C637",
+      Index == "Q91ZN5" & cys_experiment == 80 ~ "Slc35b2_C80", # Updated label
+      Index == "Q91VE0" & cys_experiment == 436 ~ "Slc27a4_C436/439", # New label
+      Index == "Q8R0S2" & cys_experiment == 960 ~ "Iqsec1_C960", # New label
+      TRUE ~ NA_character_
+    ),
+    color = case_when(
+      sample_type == "brain" ~ "#008080", # Teal for brain
+      sample_type == "MLE" ~ "purple",    # Purple for MLE
+      TRUE ~ "black"                      # Default color
+    )
+  )
+
+# Combine the experimentally_validated data with the specified data
+all_data_to_plot <- bind_rows(
+  specified_data_updated, # Specified points with labels and colors
+  experimentally_validated_data # Experimentally validated points, now in black
+)
+
+# Proceed with the plot generation as previously shown
+combined_volcano_plot <- ggplot(all_data_to_plot, aes(x = Log2FC, y = neg_log10_p_value, color = color)) +
+  geom_point(alpha = 1.0, size = 2) +
+  geom_label_repel(
+    aes(label = label),
+    box.padding = 1, point.padding = 1, segment.color = 'grey50',
+    nudge_x = 0.5, nudge_y = -1, size = 4, direction = "y", max.iter = 10000
+  ) +
+  scale_color_identity() + # Use actual colors specified in the 'color' column
+  xlim(0, 7) + # Adjusted x-axis limits from -2 to +8
+  ylim(0, 5) + # Set y-axis limits from 0 to 6
+  labs(title = "Overlay of Experimentally Validated and Novel Putative Acyl Sites",
+       x = "Log2 FC -/+ NH2OH",
+       y = "-Log10 p-value") +
+  my_theme +
+  theme(legend.position = "none")
+
+print(combined_volcano_plot)
+
+```
+
+
+
+## Rank Order Plot
+```{r}
+
+# Filter the combined dataset for rows that have p values, then arrange by Log2FC and rank them
+filtered_combined_bound <- combined_bound %>%
+  filter(!is.na(adj_p_value)) %>%
+  arrange(Log2FC) %>%
+  mutate(Rank = row_number())
+
+# Plotting
+ggplot(filtered_combined_bound, aes(x = Rank, y = Log2FC)) +
+  geom_point(aes(color = database_site_match == "experimentally_validated"), alpha = 0.4) +
+  geom_point(data = filter(filtered_combined_bound, database_site_match == "experimentally_validated"),
+             color = "magenta", alpha = 0.6) +
+  scale_color_manual(values = c(`FALSE` = "gray", `TRUE` = "magenta")) +
+  guides(color = FALSE) +  # Remove the color legend
+  labs(x = "Rank", y = "Log2 Fold Change", title = "Rank Order Plot") +
+  theme_minimal() +
+  theme(legend.title = element_blank())
+
+# Step 1: Create a new dataframe for labeled points
+specified_labels <- combined_bound %>%
+  filter((Index == "P35762" & cys_experiment == 6) |
+         (Index == "Q8BWS5" & cys_experiment == 752) |
+         (Index == "Q6PHZ8" & cys_experiment == 43) |
+         (Index == "Q9QXW9" & cys_experiment == 474) |
+         (Index == "Q3TJD7" & cys_experiment == 329) |
+         (Index == "Q8VCN6" & cys_experiment == 166 & sample_type == "MLE") |
+         (Index == "Q99N57" & cys_experiment == 637) |
+         (Index == "Q91ZN5" & cys_experiment == 80) |
+         (Index == "Q91VE0" & cys_experiment == 436) |
+         (Index == "Q8R0S2" & cys_experiment == 960)) %>%
+  mutate(label = case_when(
+      Index == "P35762" & cys_experiment == 6 ~ "CD81_C6",
+      Index == "Q8BWS5" & cys_experiment == 752 ~ "Gprin3_C752/753",
+      Index == "Q6PHZ8" & cys_experiment == 43 ~ "Kcnip4_C43",
+      Index == "Q9QXW9" & cys_experiment == 474 ~ "Slc7a8_C474",
+      Index == "Q3TJD7" & cys_experiment == 329 ~ "Pdlim7_C329/332",
+      Index == "Q8VCN6" & cys_experiment == 166 & sample_type == "MLE" ~ "CD99_C166",
+      Index == "Q99N57" & cys_experiment == 637 ~ "Raf1_C637",
+      Index == "Q91ZN5" & cys_experiment == 80 ~ "Slc35b2_C80",
+      Index == "Q91VE0" & cys_experiment == 436 ~ "Slc27a4_C436/439",
+      Index == "Q8R0S2" & cys_experiment == 960 ~ "Iqsec1_C960",
+      TRUE ~ NA_character_
+    ))
+
+# Step 2: Merge with the filtered and ranked combined_bound data
+filtered_combined_bound <- combined_bound %>%
+  filter(!is.na(adj_p_value)) %>%
+  arrange(Log2FC) %>%
+  mutate(Rank = row_number())
+
+# Combine the datasets to ensure labels are included for the specified rows
+combined_data_with_labels <- filtered_combined_bound %>%
+  left_join(specified_labels[, c("Index", "cys_experiment", "label")], by = c("Index", "cys_experiment"))
+
+# Step 3: Plotting
+ggplot(combined_data_with_labels, aes(x = Rank, y = Log2FC)) +
+  geom_point(aes(color = ifelse(database_site_match == "experimentally_validated", "magenta", "grey")), alpha = 0.3) +
+  geom_point(data = filter(combined_data_with_labels, database_site_match == "experimentally_validated"), color = "magenta", alpha = 0.6) +
+  geom_label_repel(data = filter(combined_data_with_labels, !is.na(label)),
+                   aes(label = label), nudge_y = 0.5, size = 3, segment.color = "grey50") +
+  scale_color_identity() +
+  guides(color = FALSE) +
+  labs(x = "Rank", y = "Log2 Fold Change", title = "Rank Order Plot with Specified Labels") +
+  theme_minimal() +
+  theme(legend.title = element_blank())
+
+```
+
+
+
+```{r}
+
+# Define the custom theme function
+my_rank_order_plot_theme <- function() {
+  theme_minimal() +
+    theme(
+      plot.title = element_text(size = 16),              # Set plot title font size
+      axis.title.y = element_text(size = 16),            # Set y-axis title font size
+      axis.text.y = element_text(size = 18),             # Set y-axis labels font size
+      axis.title.x = element_text(size = 16),            # Set y-axis title font size
+      axis.text.x = element_text(size = 16),             # Set y-axis labels font size
+      legend.title = element_blank()                     # Optionally remove legend title if not needed
+    )
+}
+
+
+# Create a new dataframe for labeled points based on the specified conditions
+specified_labels <- combined_bound %>%
+  filter((Index == "P35762" & cys_experiment == 6) |
+         (Index == "Q8BWS5" & cys_experiment == 752) |
+         (Index == "Q6PHZ8" & cys_experiment == 43) |
+         (Index == "Q9QXW9" & cys_experiment == 474) |
+         (Index == "Q3TJD7" & cys_experiment == 329) |
+         (Index == "Q8VCN6" & cys_experiment == 166 & sample_type == "MLE") |
+         (Index == "Q99N57" & cys_experiment == 637) |
+         (Index == "Q91ZN5" & cys_experiment == 80) |
+         (Index == "Q91VE0" & cys_experiment == 436) |
+         (Index == "Q8R0S2" & cys_experiment == 960)) %>%
+  mutate(label = case_when(
+      Index == "P35762" & cys_experiment == 6 ~ "CD81_C6",
+      Index == "Q8BWS5" & cys_experiment == 752 ~ "Gprin3_C752/753",
+      Index == "Q6PHZ8" & cys_experiment == 43 ~ "Kcnip4_C43",
+      Index == "Q9QXW9" & cys_experiment == 474 ~ "Slc7a8_C474",
+      Index == "Q3TJD7" & cys_experiment == 329 ~ "Pdlim7_C329/332",
+      Index == "Q8VCN6" & cys_experiment == 166 & sample_type == "MLE" ~ "CD99_C166",
+      Index == "Q99N57" & cys_experiment == 637 ~ "Raf1_C637",
+      Index == "Q91ZN5" & cys_experiment == 80 ~ "Slc35b2_C80",
+      Index == "Q91VE0" & cys_experiment == 436 ~ "Slc27a4_C436/439",
+      Index == "Q8R0S2" & cys_experiment == 960 ~ "Iqsec1_C960",
+      TRUE ~ NA_character_
+    ),
+    color = case_when(
+      sample_type == "brain" ~ "#2AA198", # Teal for brain
+      sample_type == "MLE" ~ "#005AB5",    # Blue for MLE
+      TRUE ~ "grey"                         # Default color
+    ))
+
+# Combine with the filtered and ranked combined_bound data
+filtered_combined_bound <- combined_bound %>%
+  filter(!is.na(adj_p_value)) %>%
+  arrange(Log2FC) %>%
+  mutate(Rank = row_number())
+
+combined_data_with_labels <- filtered_combined_bound %>%
+  left_join(specified_labels[, c("Index", "cys_experiment", "label", "color")], by = c("Index", "cys_experiment"))
+
+# Adjust here: Ensure only 'MLE' sample type for 'Q8VCN6' and 'cys_experiment == 166' is included
+combined_data_with_labels <- combined_data_with_labels %>%
+  filter(!(Index == "Q8VCN6" & cys_experiment == 166) | (sample_type == "MLE"))
+
+
+# Plotting
+ggplot(combined_data_with_labels, aes(x = Rank, y = Log2FC)) +
+  geom_point(aes(color = ifelse(database_site_match == "experimentally_validated", "#D33682", "gray")), alpha = 0.3) +
+  geom_point(data = filter(combined_data_with_labels, database_site_match == "experimentally_validated"), color = "#D33682", alpha = 0.8) +
+  geom_label_repel(data = filter(combined_data_with_labels, !is.na(label)),
+                   aes(label = label, color = color), nudge_x = -max(combined_data_with_labels$Rank) * 0.40, nudge_y = 1, size = 4, segment.color = "grey50",
+                   xlim = c(NA, max(combined_data_with_labels$Rank)),
+                   label.padding = unit(0.2, "lines")) +
+  scale_color_identity() +
+  guides(color = FALSE) +
+  labs(x = "Peptide Rank Order", y = "Log2 Fold Change", title = "") + # Adjusted title and X-axis label here
+  my_rank_order_plot_theme() +
+  scale_y_continuous(limits = c(-3, 8))
+
+
+```
+
+
+# Top unique proteins that are acylated_high_prob
+```{r}
+
+library(dplyr)
+
+# Filter data for unique database_site_match, non-NA adj_p_value < 0.05
+combined_top_genes <- combined_bound %>%
+  filter(database_site_match == "unique" & !is.na(adj_p_value) & adj_p_value < 0.05) %>%
+  arrange(desc(Log2FC)) %>%
+  head(15) %>%
+  select(Gene, cys_experiment)
+
+# Print to console
+print(combined_top_genes)
+
+
+```
+
+
+# Pie charts for database site matches
+```{r}
+
+# My theme for pie chart
+my_theme <- function(title_color = "black") {
+  theme_minimal() +
+    theme(
+      axis.title.x = element_blank(),
+      axis.title.y = element_blank(),
+      axis.text.x = element_blank(),
+      axis.text.y = element_blank(),
+      axis.ticks.x = element_blank(),
+      axis.ticks.y = element_blank(),
+      panel.grid = element_blank(),
+      panel.border = element_blank(),
+      legend.position = "none",             # Remove legend
+      plot.title = element_text(size = 24,  # Font size for title
+                                hjust = 0.5, # Horizontally center the title
+                                margin = margin(t = 0, b = 0), # Adjust the margin of title
+                                color = title_color,  # Set title color
+                                face = "bold"
+                               ),
+      plot.title.position = "plot", # Center title with the plot
+    )
+}
+
+# Function to generate pie chart for given database_site_match category
+create_pie_chart <- function(data, category_name) {
+  subset_data <- data %>% 
+    filter(database_site_match == category_name) %>% 
+    group_by(assignment) %>%
+    summarize(count = n())
+  
+  # Specify titles and title colors based on category_name
+  title_colors <- c("experimentally_validated" = "purple", "swisspalm" = "#008080", "unique" = "grey1")
+  
+  if (category_name == "experimentally_validated") {
+    plot_title <- "Experimentally Validated"
+  } else if (category_name == "swisspalm") {
+    plot_title <- "Swisspalm"
+  } else if (category_name == "unique") {
+    plot_title <- "Unique"
+  } else {
+    plot_title <- category_name
+  }
+  
+  ggplot(subset_data, aes(x = "", y = count, fill = assignment)) +
+    geom_bar(stat = "identity", width = 1) +
+    coord_polar(theta = "y") +
+    labs(title = plot_title) +
+    scale_fill_manual(values = c("acylated_high_prob" = "blue", 
+                                 "acylated_low_prob" = "orange", 
+                                 "not_acylated" = "red")) +
+    geom_text(aes(label = count), position = position_stack(vjust = 0.5), color = "white", size = 9) +
+    theme_minimal() +  
+    my_theme(title_colors[[category_name]])  # Pass title color here           
+}
+
+# Create pie charts
+combined_pie_exp_validated <- create_pie_chart(combined_bound, "experimentally_validated")
+combined_pie_swisspalm <- create_pie_chart(combined_bound, "swisspalm")
+combined_pie_unique <- create_pie_chart(combined_bound, "unique")
+
+# Print pie charts
+print(combined_pie_exp_validated)
+print(combined_pie_swisspalm)
+print(combined_pie_unique)
+
+# Save the pie charts to pdf
+ggsave(filename="combined_pie_exp_validated.pdf", plot=combined_pie_exp_validated, width=6, height=4)
+ggsave(filename="combined_pie_swisspalm.pdf", plot=combined_pie_swisspalm, width=6, height=4)
+ggsave(filename="combined_pie_unique.pdf", plot=combined_pie_unique, width=6, height=4)
+
+```
+
+## Combine the flow throw dataframes (MLE12 + Brain) as this is needed for the ORA
+```{r}
+
+# Add a new column "sample_type" to each dataframe before combining
+brain_unbound$sample_type <- "brain"
+MLE_unbound$sample_type <- "MLE"
+
+# Combine the dataframes by rows
+combined_unbound <- rbind(brain_unbound, MLE_unbound)
+
+```
+
+
+
+## Defining gene lists for the GO analyses
+## Define the "acylated_high_prob" gene list
+## Define the "unenriched" gene list = Unbound proteins minus the acylated_high_prob
+## This list is essentially the "unenriched"
+```{r}
+
+# Define the putative acylated
+combined_acylated_high_prob <- filter(combined_bound, assignment == "acylated_high_prob")
+
+# Define the acylated_low_prob
+combined_acylated_low_prob <- filter(combined_bound, assignment == "acylated_low_prob")
+
+# Define the not_acylated
+combined_not_acylated <- filter(combined_bound, assignment == "not_acylated")
+
+# Combine the putative acylated and acylated_low_prob into one data frame
+rows_to_remove <- bind_rows(combined_acylated_high_prob, combined_acylated_low_prob) %>%
+  select(Index)
+
+# Create the new dataframe combined_unenriched by removing these rows from combined_unbound
+combined_unenriched <- anti_join(combined_unbound, rows_to_remove, by = "Index")
+
+```
+
+
+
+
+# ORA comparing acylated_high_prob with a universal gene list
+# Ont = All
+
+```{r}
+
+# Load required libraries
+library(dplyr)
+library(clusterProfiler)
+library(ggplot2)
+library(org.Mm.eg.db)
+
+# Extract unique gene names from the two datasets
+combined_genes_acylated <- unique(combined_acylated_high_prob$Gene)
+combined_genes_not_acylated <- unique(combined_not_acylated$Gene)
+combined_genes_unbound <- unique(combined_unbound$Gene)
+
+# Merge the gene lists to create a comprehensive universe
+combined_complete_universe <- unique(c(combined_genes_unbound, combined_genes_not_acylated, combined_genes_acylated))
+
+# Perform ORA
+combined_enrich_result_acylated <- enrichGO(gene = combined_genes_acylated,
+                                         universe = combined_complete_universe,
+                                         OrgDb = org.Mm.eg.db,
+                                         keyType = "SYMBOL",
+                                         ont = "ALL",
+                                         pAdjustMethod = "BH",
+                                         pvalueCutoff = 0.05,
+                                         qvalueCutoff = 0.05)
+
+# Access the actual data frame from the result
+combined_enrich_result_acylated_df <- as.data.frame(combined_enrich_result_acylated)
+
+# Save results to a file
+write.table(combined_enrich_result_acylated_df, file = "combined_enrich_result_acylated.txt", sep = "\t", quote = FALSE, row.names = FALSE, col.names = TRUE)
+
+# Modify the sort_and_plot function for dot plot
+sort_and_plot <- function(df, title) {
+  
+  # Convert GeneRatio to numeric for sorting
+  df$GeneRatioNumeric <- as.numeric(unlist(lapply(strsplit(as.character(df$GeneRatio), "/"), function(x) as.numeric(x[1])/as.numeric(x[2]))))
+  
+  # Sort by GeneRatio and take the top 15 terms
+  df_sorted <- df %>%
+    arrange(desc(GeneRatioNumeric)) %>%
+    head(15)
+  
+  # Dot plot
+  plot <- ggplot(df_sorted, aes(x = reorder(Description, GeneRatioNumeric), y = GeneRatioNumeric)) +
+  geom_point(aes(color = qvalue, size = Count)) +
+  scale_color_gradient(low = "blue", high = "red", name = "qvalue") +
+  scale_size_continuous(name = "Count") +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 14),       # X axis values font size
+    axis.text.y = element_text(size = 10),                              # Y axis values font size
+    axis.title.x = element_text(size = 18),                                     # Remove x-axis title
+    axis.title.y = element_text(size = 18),                             # Y axis title font size
+    plot.title = element_text(size = 16, hjust = 0.5),                  # Main title font size
+    legend.text = element_text(size = 12),
+    legend.title = element_text(size = 14)
+  ) +
+  labs(y = "Gene Ratio", x = NULL, title = title) +                     # NULL removes x label
+  coord_flip() +
+  guides(size = guide_legend(order = 1), color = guide_colorbar(order = 2))
+  
+  # Display the plot (optional)
+  print(plot)
+  
+  # Save the plot to a PDF with the specified name
+  ggsave(filename = "combined_ORA_GO.pdf", plot = plot)
+}
+  
+# Plot for the complete dataset
+sort_and_plot(combined_enrich_result_acylated_df, "Top 15 Terms in combined Acylated Genes")
+
+
+```
+
+
+
+## Same as above but separate Ont outputs
+# ORA comparing acylated_high_prob with a universal gene list
+# Ont = BP, CC and MF separately
+
+```{r}
+
+# Load required libraries
+library(dplyr)
+library(clusterProfiler)
+library(ggplot2)
+library(org.Mm.eg.db)
+
+# Extract unique gene names from the two datasets
+combined_genes_acylated <- unique(combined_acylated_high_prob$Gene)
+combined_genes_not_acylated <- unique(combined_not_acylated$Gene)
+combined_genes_unbound <- unique(combined_unbound$Gene)
+
+# Merge the gene lists to create a comprehensive universe
+combined_complete_universe <- unique(c(combined_genes_unbound, combined_genes_not_acylated, combined_genes_acylated))
+
+# Function to perform ORA and plot for a given ontology
+perform_ORA_and_plot <- function(ont) {
+  combined_enrich_result <- enrichGO(gene = combined_genes_acylated,
+                                     universe = combined_complete_universe,
+                                     OrgDb = org.Mm.eg.db,
+                                     keyType = "SYMBOL",
+                                     ont = ont,
+                                     pAdjustMethod = "BH",
+                                     pvalueCutoff = 0.05,
+                                     qvalueCutoff = 0.05)
+  
+  # Convert to data frame
+  combined_enrich_result_df <- as.data.frame(combined_enrich_result)
+  
+  # Sort and plot function adapted for dot plot
+  sort_and_plot <- function(df, title) {
+    df$GeneRatioNumeric <- as.numeric(unlist(lapply(strsplit(as.character(df$GeneRatio), "/"), function(x) as.numeric(x[1])/as.numeric(x[2]))))
+    df_sorted <- df %>%
+      arrange(desc(GeneRatioNumeric)) %>%
+      head(15)
+    
+    plot <- ggplot(df_sorted, aes(x = reorder(Description, GeneRatioNumeric), y = GeneRatioNumeric)) +
+      geom_point(aes(color = qvalue, size = Count)) +
+      scale_color_gradient(low = "blue", high = "red", name = "qvalue") +
+      scale_size_continuous(name = "Count") +
+      theme(
+        axis.text.x = element_text(angle = 45, hjust = 1, size = 14),
+        axis.text.y = element_text(size = 10),
+        axis.title.x = element_text(size = 18),
+        axis.title.y = element_text(size = 18),
+        plot.title = element_text(size = 16, hjust = 0.5),
+        legend.text = element_text(size = 12),
+        legend.title = element_text(size = 14)
+      ) +
+      labs(y = "Gene Ratio", x = NULL, title = title) +
+      coord_flip() +
+      guides(size = guide_legend(order = 1), color = guide_colorbar(order = 2))
+    
+    print(plot)
+    
+    # Save the plot to a PDF with a dynamic file name based on ontology
+    ggsave(filename = paste("combined_ORA_GO_", ont, ".pdf", sep = ""), plot = plot)
+  }
+  
+  # Call the plotting function
+  sort_and_plot(combined_enrich_result_df, paste("Top 15 Terms in combined Acylated Genes -", ont))
+}
+
+# List of ontologies to analyze and plot
+ont_list <- c("BP", "CC", "MF")
+
+# Loop through each ontology and perform ORA and plotting
+for(ont in ont_list) {
+  perform_ORA_and_plot(ont)
+}
+
+```
+
+## Write the combined_bound to a csv
+```{r}
+
+# Write combined_bound to a CSV
+write.csv(combined_bound, "combined_bound.csv", row.names = FALSE)
+
+# write the combined_unbound to a CSV
+write.csv(combined_unbound, "combined_unbound.csv", row.names = FALSE)
+
+```
+
+
+
+# Remove dataframes no longer needed
+```{r}
+
+rm(ADH1_values)
+rm(combined_assignment_df)
+rm(combined_assignment_df_summarized)
+rm(combined_combined)
+rm(combined_CV_combined)
+rm(combined_bound_sub)
+rm(combined_filtered_bound)
+rm(combined_unbound_sub)
+rm(combined_heatmap_data_sorted)
+rm(combined_heatmap_data_replicates)
+rm(combined_median_CVs)
+rm(combined_plot)
+rm(combined_plot_df)
+rm(combined_uniprot_plot)
+rm(combined_unique_plot)
+rm(combined_volcano_plot)
+rm(bound_long)
+rm(flow_long)
+rm(plot_acylated_low_prob)
+rm(plot_not_acylated)
+rm(plot_acylated_high_prob)
+rm(rows_to_remove)
+rm(swisspalm_and_both)
+rm(uniprot_and_both)
+rm(unique_db)
+rm(volcano_plot)
+
+```
+
+
+# Detach packages
+```{r}
+detach("package:clusterProfiler", unload=TRUE)
+detach("package:org.Mm.eg.db", unload=TRUE)
+
+```
+

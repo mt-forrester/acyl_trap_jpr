@@ -1,0 +1,1042 @@
+---
+title: "Barplots of Select Known Acylated Sites and CV Calculations"
+output: html_document
+date: "2024-02-11"
+---
+
+## CV Calculations
+
+## Read in Unbound (Flowthrough) and Bound (Pulldown)
+## Brain
+## Reverse the Log2 transformation
+```{r}
+
+## READ IN BRAIN DATA
+
+library(tidyverse)
+
+# read in the flow through
+library(readr)
+brain_flow_through_for_barplots <- read_delim("TMT_output_philosopher_for_R_analysis/2_14_24_output_for_R/brain_unbound_abundance_protein_MD.tsv", 
+    delim = "\t", escape_double = FALSE, 
+    trim_ws = TRUE)
+
+## Reverse the log2 transformation
+# Apply the inverse log2 transformation (2^x) to columns 5 through 21 for all rows
+brain_flow_through_for_barplots[, 5:21] <- 2^brain_flow_through_for_barplots[, 5:21]
+
+# Rename columns
+rename_cols <- function(df, start_index, end_index, prefix) {
+  colnames(df)[start_index:end_index] <- paste0(prefix, 1:(end_index - start_index + 1))
+  return(df)
+}
+
+brain_flow_through_for_barplots <- rename_cols(brain_flow_through_for_barplots, 6, 9, "no_HA_")
+brain_flow_through_for_barplots <- rename_cols(brain_flow_through_for_barplots, 10, 13, "plus_HA_")
+
+# Remove columns
+brain_flow_through_for_barplots <- brain_flow_through_for_barplots[,-c(14:21)]
+
+
+#### Normalizing based on yeast ADH1 intensity
+
+# Assuming 'brain_flow_through_for_barplots' is your dataframe
+# Extract ADH1 intensities for the specific Index
+# adh1_intensities <- brain_flow_through_for_barplots %>% 
+#   filter(Index == "P00330") %>%
+#   select(contains("HA"))
+
+# Extract ADH1 intensities into a vector
+# adh1_intensities_vec <- c(adh1_intensities$no_HA_1, adh1_intensities$no_HA_2, 
+#                           adh1_intensities$no_HA_3, adh1_intensities$no_HA_4, 
+#                           adh1_intensities$plus_HA_1, adh1_intensities$plus_HA_2, 
+#                           adh1_intensities$plus_HA_3, adh1_intensities$plus_HA_4)
+
+# Calculate the mean ADH1 intensity
+# mean_adh1_intensity <- mean(adh1_intensities_vec)
+
+# Calculate scaling factors for each replicate relative to the mean ADH1 intensity
+# scaling_factors <- adh1_intensities_vec / mean_adh1_intensity
+
+# Normalize the intensities in the dataframe using the calculated scaling factors
+# replicate_columns <- c("no_HA_1", "no_HA_2", "no_HA_3", "no_HA_4", 
+#                        "plus_HA_1", "plus_HA_2", "plus_HA_3", "plus_HA_4")
+
+# Apply the scaling factors from ADH1
+# brain_flow_through_for_barplots <- brain_flow_through_for_barplots %>%
+#   mutate(across(all_of(replicate_columns), 
+#                 ~ .x / scaling_factors[match(cur_column(), replicate_columns)] * mean_adh1_intensity))
+
+
+## Read in the Bound/Eluant data
+brain_eluant_for_barplots <- read_delim("TMT_output_philosopher_for_R_analysis/2_14_24_output_for_R/brain_bound_abundance_multi-site_None.tsv", 
+    delim = "\t", escape_double = FALSE, 
+    trim_ws = TRUE)
+
+
+## Reverse the log2 transformation
+# Apply the inverse log2 transformation (2^x) to columns 9 through 25 for all rows
+brain_eluant_for_barplots[, 9:25] <- 2^brain_eluant_for_barplots[, 9:25]
+
+
+# Rename columns
+rename_cols <- function(df, start_index, end_index, prefix) {
+  colnames(df)[start_index:end_index] <- paste0(prefix, 1:(end_index - start_index + 1))
+  return(df)
+}
+
+brain_eluant_for_barplots <- rename_cols(brain_eluant_for_barplots, 10, 13, "no_HA_")
+brain_eluant_for_barplots <- rename_cols(brain_eluant_for_barplots, 14, 17, "plus_HA_")
+
+# Remove columns
+brain_eluant_for_barplots <- brain_eluant_for_barplots[,-c(18:25)]
+
+
+
+```
+
+
+
+```{r}
+## READ IN MLE DATA
+
+library(tidyverse)
+
+# read in the flow through
+library(readr)
+MLE_flow_through_for_barplots <- read_delim("TMT_output_philosopher_for_R_analysis/2_14_24_output_for_R/MLE_unbound_abundance_protein_MD.tsv", 
+    delim = "\t", escape_double = FALSE, 
+    trim_ws = TRUE)
+
+## Reverse the log2 transformation
+# Apply the inverse log2 transformation (2^x) to columns 5 through 21 for all rows
+MLE_flow_through_for_barplots[, 5:21] <- 2^MLE_flow_through_for_barplots[, 5:21]
+
+# Rename columns
+rename_cols <- function(df, start_index, end_index, prefix) {
+  colnames(df)[start_index:end_index] <- paste0(prefix, 1:(end_index - start_index + 1))
+  return(df)
+}
+
+MLE_flow_through_for_barplots <- rename_cols(MLE_flow_through_for_barplots, 14, 17, "no_HA_")
+MLE_flow_through_for_barplots <- rename_cols(MLE_flow_through_for_barplots, 18, 21, "plus_HA_")
+
+# Remove columns
+MLE_flow_through_for_barplots <- MLE_flow_through_for_barplots[,-c(6:13)]
+
+
+#### Scaling based on yeast ADH1 intensity
+
+# Assuming 'MLE_flow_through_for_barplots' is your dataframe
+# Extract ADH1 intensities for the specific Index
+# adh1_intensities <- MLE_flow_through_for_barplots %>% 
+#   filter(Index == "P00330") %>%
+#   select(contains("HA"))
+
+# Extract ADH1 intensities into a vector
+# adh1_intensities_vec <- c(adh1_intensities$no_HA_1, adh1_intensities$no_HA_2, 
+#                           adh1_intensities$no_HA_3, adh1_intensities$no_HA_4, 
+#                           adh1_intensities$plus_HA_1, adh1_intensities$plus_HA_2, 
+#                           adh1_intensities$plus_HA_3, adh1_intensities$plus_HA_4)
+
+# Calculate the mean ADH1 intensity
+# mean_adh1_intensity <- mean(adh1_intensities_vec)
+
+# Calculate scaling factors for each replicate relative to the mean ADH1 intensity
+# scaling_factors <- adh1_intensities_vec / mean_adh1_intensity
+
+# Normalize the intensities in the dataframe using the calculated scaling factors
+# replicate_columns <- c("no_HA_1", "no_HA_2", "no_HA_3", "no_HA_4", 
+#                        "plus_HA_1", "plus_HA_2", "plus_HA_3", "plus_HA_4")
+
+# Apply the scaling factors from ADH1
+# MLE_flow_through_for_barplots <- MLE_flow_through_for_barplots %>%
+#   mutate(across(all_of(replicate_columns), 
+#                 ~ .x / scaling_factors[match(cur_column(), replicate_columns)] * mean_adh1_intensity))
+
+
+## Read in the Bound/Eluant data
+MLE_eluant_for_barplots <- read_delim("TMT_output_philosopher_for_R_analysis/2_14_24_output_for_R/MLE_bound_abundance_multi-site_None.tsv", 
+    delim = "\t", escape_double = FALSE, 
+    trim_ws = TRUE)
+
+
+## Reverse the log2 transformation
+# Apply the inverse log2 transformation (2^x) to columns 9 through 25 for all rows
+MLE_eluant_for_barplots[, 9:25] <- 2^MLE_eluant_for_barplots[, 9:25]
+
+
+# Rename columns
+rename_cols <- function(df, start_index, end_index, prefix) {
+  colnames(df)[start_index:end_index] <- paste0(prefix, 1:(end_index - start_index + 1))
+  return(df)
+}
+
+MLE_eluant_for_barplots <- rename_cols(MLE_eluant_for_barplots, 18, 21, "no_HA_")
+MLE_eluant_for_barplots <- rename_cols(MLE_eluant_for_barplots, 22, 25, "plus_HA_")
+
+# Remove columns
+MLE_eluant_for_barplots <- MLE_eluant_for_barplots[,-c(10:17)]
+
+
+```
+
+
+
+
+
+## CV Calculations
+## MLE and Brain
+```{r}
+
+
+# Adjusted function to compute CV with at least 3 out of 4 values available
+compute_cv <- function(df, columns) {
+  # Initialize a vector to store CV values, filled with NA
+  cv_values <- rep(NA, nrow(df))
+  
+  # Loop over each row
+  for (i in 1:nrow(df)) {
+    # Subset the row for specified columns and remove NA values
+    values <- na.omit(unlist(df[i, columns]))
+    
+    # Check if there are at least 3 non-NA values
+    if (length(values) >= 3) {
+      # Calculate mean and standard deviation for the non-NA values
+      mean_value <- mean(values)
+      sd_value <- sd(values)
+      
+      # Calculate and store the CV if criteria are met
+      cv_values[i] <- 100 * (sd_value / mean_value)
+    }
+  }
+  
+  return(cv_values)
+}
+
+
+# Compute CV for brain_flow_through using non-log2 transformed values
+brain_flow_through_for_barplots$CV_no_HA <- compute_cv(brain_flow_through_for_barplots, c("no_HA_1", "no_HA_2", "no_HA_3", "no_HA_4"))
+brain_flow_through_for_barplots$CV_plus_HA <- compute_cv(brain_flow_through_for_barplots, c("plus_HA_1", "plus_HA_2", "plus_HA_3", "plus_HA_4"))
+
+# Compute CV for brain_eluant using non-log2 transformed values
+brain_eluant_for_barplots$CV_no_HA <- compute_cv(brain_eluant_for_barplots, c("no_HA_1", "no_HA_2", "no_HA_3", "no_HA_4"))
+brain_eluant_for_barplots$CV_plus_HA <- compute_cv(brain_eluant_for_barplots, c("plus_HA_1", "plus_HA_2", "plus_HA_3", "plus_HA_4"))
+
+# Compute CV for MLE_flow_through using non-log2 transformed values
+MLE_flow_through_for_barplots$CV_no_HA <- compute_cv(MLE_flow_through_for_barplots, c("no_HA_1", "no_HA_2", "no_HA_3", "no_HA_4"))
+MLE_flow_through_for_barplots$CV_plus_HA <- compute_cv(MLE_flow_through_for_barplots, c("plus_HA_1", "plus_HA_2", "plus_HA_3", "plus_HA_4"))
+
+# Compute CV for MLE_eluant using non-log2 transformed values
+MLE_eluant_for_barplots$CV_no_HA <- compute_cv(MLE_eluant_for_barplots, c("no_HA_1", "no_HA_2", "no_HA_3", "no_HA_4"))
+MLE_eluant_for_barplots$CV_plus_HA <- compute_cv(MLE_eluant_for_barplots, c("plus_HA_1", "plus_HA_2", "plus_HA_3", "plus_HA_4"))
+
+
+```
+
+
+## CV Calculations
+
+```{r}
+
+# Define a function to print the desired statistics for CV without SD
+print_cv_statistics <- function(df, cv_column) {
+  # Extract the CV column
+  cv_values <- df[[cv_column]]
+  
+  # Calculate mean and median, ignoring NA values
+  mean_cv <- mean(cv_values, na.rm = TRUE)
+  median_cv <- median(cv_values, na.rm = TRUE)
+  
+  # Print the statistics without SD
+  cat(paste(cv_column, "- Mean:", round(mean_cv, 2), "Median:", round(median_cv, 2), "\n"))
+}
+
+# Print statistics for each CV column in each dataframe
+cat("Brain Unbound:\n")
+print_cv_statistics(brain_flow_through_for_barplots, "CV_no_HA")
+print_cv_statistics(brain_flow_through_for_barplots, "CV_plus_HA")
+
+cat("\nBrain Bound:\n")
+print_cv_statistics(brain_eluant_for_barplots, "CV_no_HA")
+print_cv_statistics(brain_eluant_for_barplots, "CV_plus_HA")
+
+cat("\nMLE Unbound:\n")
+print_cv_statistics(MLE_flow_through_for_barplots, "CV_no_HA")
+print_cv_statistics(MLE_flow_through_for_barplots, "CV_plus_HA")
+
+cat("\nMLE Bound:\n")
+print_cv_statistics(MLE_eluant_for_barplots, "CV_no_HA")
+print_cv_statistics(MLE_eluant_for_barplots, "CV_plus_HA")
+
+```
+
+
+## Plot CV
+## Define a my theme
+```{r}
+
+library(ggplot2)
+
+# Define custom theme
+my_theme <- function() {
+  theme_minimal() +
+    theme(
+      plot.title = element_text(size = 20),
+      axis.title.x = element_text(size = 16),
+      axis.title.y = element_text(size = 16),
+      axis.text.x = element_text(size = 14),
+      axis.text.y = element_text(size = 16)
+    )
+}
+
+```
+
+
+## Plot CV's
+# reshape into long format
+```{r}
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+# this is necessary because later packages were masking rename from dplyr
+rename <- dplyr::rename
+select <- dplyr::select
+
+# Reshape dataframes for ggplot, adjust for simplified condition labeling
+flow_long <- brain_flow_through_for_barplots %>%
+  select(Index, CV_no_HA, CV_plus_HA) %>%
+  gather(key = "Condition", value = "CV", -Index) %>%
+  mutate(Type = "Brain Unbound", Condition = ifelse(Condition == "CV_no_HA", "no HA", "plus HA"))
+
+eluant_long <- brain_eluant_for_barplots %>%
+  select(Index, CV_no_HA, CV_plus_HA) %>%
+  gather(key = "Condition", value = "CV", -Index) %>%
+  mutate(Type = "Brain Bound", Condition = ifelse(Condition == "CV_no_HA", "no HA", "plus HA"))
+
+MLE_flow_long <- MLE_flow_through_for_barplots %>%
+  select(Index, CV_no_HA, CV_plus_HA) %>%
+  gather(key = "Condition", value = "CV", -Index) %>%
+  mutate(Type = "MLE Unbound", Condition = ifelse(Condition == "CV_no_HA", "no HA", "plus HA"))
+
+MLE_eluant_long <- MLE_eluant_for_barplots %>%
+  select(Index, CV_no_HA, CV_plus_HA) %>%
+  gather(key = "Condition", value = "CV", -Index) %>%
+  mutate(Type = "MLE Bound", Condition = ifelse(Condition == "CV_no_HA", "no HA", "plus HA"))
+
+# Combining the datasets
+combined_CV <- rbind(flow_long, eluant_long, MLE_flow_long, MLE_eluant_long)
+
+# Adjust the plot to separate no_HA and plus_HA conditions
+CV_plot <- ggplot(combined_CV, aes(x = Type, y = CV, fill = Condition)) +
+  geom_boxplot() +
+  scale_fill_manual(values = c("no HA" = "gray", "plus HA" = "magenta")) +
+  coord_cartesian(ylim = c(0, 100)) +
+  labs(
+    title = "Coefficient of Variation Across Conditions",
+    y = "CV (%)",
+    x = ""  # No specific x-axis label needed
+  ) +
+  my_theme() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Print the modified CV boxplot
+print(CV_plot)
+
+# Optionally, save the plot
+ggsave("CV_across_conditions.pdf", plot = CV_plot, width = 8, height = 4)
+
+# remove dataframes
+rm(combined_CV)
+rm(eluant_long)
+rm(flow_long)
+rm(MLE_eluant_long)
+rm(MLE_flow_long)
+
+```
+
+
+## My theme for specific data barplots
+```{r}
+
+library(ggtext)
+
+my_theme <- function() { 
+  theme_minimal() +
+    theme(
+      plot.title = element_blank(),  # Ensures the title is not printed
+      axis.title.x = element_blank(),
+      axis.title.y = element_blank(),
+      legend.position = "none",
+      axis.text.x = element_text(size = 50),
+      axis.text.y = element_text(size = 30),
+  #    axis.text.y = element_blank(),  # Removes y-axis text
+      axis.line = element_line(size = 1.5)  # Makes x and y axis lines thicker
+    )
+}
+
+```
+
+
+
+## Barplots of select sites
+## Gnas bound and unbound
+## Brain
+```{r}
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+# Filter for specific indices and reshape the data
+gnas_bound <- brain_eluant_for_barplots %>%
+  filter(Index %in% c("P63094_3_3_1_1_C3", "P63094_379_379_1_1_C379")) %>%
+  select(Index, starts_with("no_HA"), starts_with("plus_HA")) %>%
+  pivot_longer(cols = -Index, names_to = "Condition", values_to = "Value") %>%
+  mutate(Condition = sub("_\\d+$", "", Condition),  # Remove replicate numbers
+         HA_Type = ifelse(grepl("no_HA", Condition), "no_HA", "plus_HA"),
+         Replicate = sub(".*_", "", Condition))  # Extract replicate number
+
+### Calculate Mean and SE for Each Condition
+
+gnas_bound_mean_se_data <- gnas_bound %>%
+  group_by(Index, HA_Type) %>%
+  summarise(
+    Mean = mean(Value, na.rm = TRUE),
+    SE = sd(Value, na.rm = TRUE) / sqrt(n())
+  )
+
+### Plot the Data
+gnas_barplot_bound <- ggplot(gnas_bound_mean_se_data, aes(x = Index, y = Mean, fill = HA_Type)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.7), width = 0.6) +
+  geom_errorbar(aes(ymin = Mean - SE, ymax = Mean + SE), width = 0.4, size = 1, position = position_dodge(width = 0.7)) +
+  labs(title = expression("G" * alpha * "S: Bound"), y = "Intensity", x = "") +
+  scale_fill_manual(values = c("no_HA" = "gray", "plus_HA" = "magenta")) +
+  my_theme() +
+  scale_y_continuous(labels = scales::scientific) +  # Format y-axis values in scientific notation
+  scale_x_discrete(labels = c("P63094_3_3_1_1_C3" = "Cys 3", "P63094_379_379_1_1_C379" = "Cys 379"))  # Manually set x-axis labels
+
+print(gnas_barplot_bound)
+
+
+# Extract the row for the specific index and reshape
+gnas_flow_through <- brain_flow_through_for_barplots %>%
+  filter(Index == "P63094") %>%
+  select(Index, starts_with("no_HA"), starts_with("plus_HA")) %>%
+  pivot_longer(cols = -Index, names_to = "Condition", values_to = "Value") %>%
+  mutate(Condition = sub("_\\d+$", "", Condition),  # Normalize condition names
+         HA_Type = ifelse(grepl("no_HA", Condition), "no_HA", "plus_HA"),
+         Replicate = sub(".*_", "", Condition))  # Extract replicate number
+
+
+gnas_flow_through_mean_se_data <- gnas_flow_through %>%
+  group_by(HA_Type) %>%
+  summarise(
+    Mean = mean(Value, na.rm = TRUE),
+    SE = sd(Value, na.rm = TRUE) / sqrt(n())
+  )
+
+gnas_barplot_unbound <- ggplot(gnas_flow_through_mean_se_data, aes(x = HA_Type, y = Mean, fill = HA_Type)) +
+  geom_bar(stat = "identity", position = position_dodge(), width = 0.5) +
+  geom_errorbar(aes(ymin = Mean - SE, ymax = Mean + SE), width = 0.4, size = 1, position = position_dodge(0.5)) +
+  labs(title = expression("G" * alpha * "S: Unbound"), y = "Intensity", x = "") +
+  scale_fill_manual(values = c("no_HA" = "gray", "plus_HA" = "magenta")) +
+  my_theme() +  # Apply the custom theme
+  theme(axis.text.x = element_blank()) +  # Hide x-axis labels
+  scale_y_continuous(labels = scales::scientific)  # Format y-axis values in scientific notation
+
+print(gnas_barplot_unbound)
+
+# remove dataframes
+rm(gnas_flow_through)
+
+## save the bound and unbound plots as pdf
+ggsave(filename = "gnas_barplot_bound.pdf", plot = gnas_barplot_bound, path = "barplots_known_acyl_sites", width = 8, height = 6)
+ggsave(filename = "gnas_barplot_unbound.pdf", plot = gnas_barplot_unbound, path = "barplots_known_acyl_sites", width = 8, height = 6)
+
+
+# red and blue labels
+gnas_barplot_bound <- ggplot(gnas_bound_mean_se_data, aes(x = Index, y = Mean, fill = HA_Type)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.7), width = 0.6) +
+  geom_errorbar(aes(ymin = Mean - SE, ymax = Mean + SE), width = 0.4, size = 1, position = position_dodge(width = 0.7)) +
+  labs(title = expression("G" * alpha * "S: Bound"), y = "Intensity", x = "") +
+  scale_fill_manual(values = c("no_HA" = "gray", "plus_HA" = "magenta")) +
+  my_theme() +
+  scale_y_continuous(labels = scales::scientific) +
+  scale_x_discrete(labels = c("P63094_3_3_1_1_C3" = "<span style='color:blue;'>Cys 3</span>", "P63094_379_379_1_1_C379" = "<span style='color:red;'>Cys 379</span>"))  # Manually set x-axis labels with color
+
+# Use element_markdown() from ggtext to render the axis text with HTML formatting
+gnas_barplot_bound + theme(axis.text.x = element_markdown())
+
+```
+
+
+
+## Barplots of select sites
+## SNAP25 bound and unbound
+## Brain
+```{r}
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+# Filter for specific indices and reshape the data
+snap25_bound <- brain_eluant_for_barplots %>%
+  filter(Index %in% c("P60879_85_92_4_4_C85C88C90C92")) %>%
+  select(Index, starts_with("no_HA"), starts_with("plus_HA")) %>%
+  pivot_longer(cols = -Index, names_to = "Condition", values_to = "Value") %>%
+  mutate(Condition = sub("_\\d+$", "", Condition),  # Remove replicate numbers
+         HA_Type = ifelse(grepl("no_HA", Condition), "no_HA", "plus_HA"),
+         Replicate = sub(".*_", "", Condition))  # Extract replicate number
+
+### Calculate Mean and SE for Each Condition
+
+snap25_bound_mean_se_data <- snap25_bound %>%
+  group_by(Index, HA_Type) %>%
+  summarise(
+    Mean = mean(Value, na.rm = TRUE),
+    SE = sd(Value, na.rm = TRUE) / sqrt(n())
+  )
+
+### Plot the Data
+
+snap25_barplot_bound <- ggplot(snap25_bound_mean_se_data, aes(x = Index, y = Mean, fill = HA_Type)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.7), width = 0.6) +
+  geom_errorbar(aes(ymin = Mean - SE, ymax = Mean + SE), width = 0.4, size = 1, position = position_dodge(width = 0.7)) +
+  labs(title = "Snap25: Bound", y = "Intensity", x = "") +
+  scale_fill_manual(values = c("no_HA" = "gray", "plus_HA" = "magenta")) +
+  my_theme() +
+  scale_y_continuous(labels = scales::scientific) +  # Format y-axis values in scientific notation
+  scale_x_discrete(labels = c("P60879_85_92_4_4_C85C88C90C92" = "Cys 85/88/90/92"))  # Manually set x-axis labels
+
+print(snap25_barplot_bound)
+
+
+# Extract the row for the specific index and reshape
+snap25_flow_through <- brain_flow_through_for_barplots %>%
+  filter(Index == "P60879") %>%
+  select(Index, starts_with("no_HA"), starts_with("plus_HA")) %>%
+  pivot_longer(cols = -Index, names_to = "Condition", values_to = "Value") %>%
+  mutate(Condition = sub("_\\d+$", "", Condition),  # Normalize condition names
+         HA_Type = ifelse(grepl("no_HA", Condition), "no_HA", "plus_HA"),
+         Replicate = sub(".*_", "", Condition))  # Extract replicate number
+
+
+snap25_flow_through_mean_se_data <- snap25_flow_through %>%
+  group_by(HA_Type) %>%
+  summarise(
+    Mean = mean(Value, na.rm = TRUE),
+    SE = sd(Value, na.rm = TRUE) / sqrt(n())
+  )
+
+snap25_barplot_unbound <- ggplot(snap25_flow_through_mean_se_data, aes(x = HA_Type, y = Mean, fill = HA_Type)) +
+  geom_bar(stat = "identity", position = position_dodge(), width = 0.5) +
+  geom_errorbar(aes(ymin = Mean - SE, ymax = Mean + SE), width = 0.4, size = 1, position = position_dodge(0.5)) +
+  labs(title = "Snap-25: Unbound", y = "Intensity", x = "") +
+  scale_fill_manual(values = c("no_HA" = "gray", "plus_HA" = "magenta")) +
+  my_theme() +  # Apply the custom theme
+  theme(axis.text.x = element_blank()) +  # Hide x-axis labels
+  scale_y_continuous(labels = scales::scientific)  # Format y-axis values in scientific notation
+
+print(snap25_barplot_unbound)
+
+# remove dataframes
+rm(snap25_flow_through)
+
+
+## save the bound and unbound plots as pdf
+ggsave(filename = "snap25_barplot_bound.pdf", plot = snap25_barplot_bound, path = "barplots_known_acyl_sites", width = 8, height = 6)
+ggsave(filename = "snap25_barplot_unbound.pdf", plot = snap25_barplot_unbound, path = "barplots_known_acyl_sites", width = 8, height = 6)
+
+
+# Your plotting code for snap25_barplot_bound with modified x-axis label
+snap25_barplot_bound <- ggplot(snap25_bound_mean_se_data, aes(x = Index, y = Mean, fill = HA_Type)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.7), width = 0.6) +
+  geom_errorbar(aes(ymin = Mean - SE, ymax = Mean + SE), width = 0.4, size = 1, position = position_dodge(width = 0.7)) +
+  labs(title = "Snap25: Bound", y = "Intensity", x = "") +
+  scale_fill_manual(values = c("no_HA" = "gray", "plus_HA" = "magenta")) +
+  my_theme() +
+  scale_y_continuous(labels = scales::scientific) +
+  scale_x_discrete(labels = c("P60879_85_92_4_4_C85C88C90C92" = "<span style='color:blue;'>Cys 85/88/90/92</span>")) +  # Use HTML-like syntax for colored label
+  theme(axis.text.x = element_markdown())  # Apply element_markdown for the x-axis labels
+
+print(snap25_barplot_bound)
+
+
+```
+
+
+
+## Flotillin-1 bound and unbound
+## Brain
+```{r}
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+# Filter for specific indices and reshape the data for the bound condition
+flot1_bound <- brain_eluant_for_barplots %>%
+  filter(Index %in% c("O08917_34_34_1_1_C34")) %>%
+  select(Index, starts_with("no_HA"), starts_with("plus_HA")) %>%
+  pivot_longer(cols = -Index, names_to = "Condition", values_to = "Value") %>%
+  mutate(Condition = sub("_\\d+$", "", Condition),  # Remove replicate numbers
+         HA_Type = ifelse(grepl("no_HA", Condition), "no_HA", "plus_HA"),
+         Replicate = sub(".*_", "", Condition))  # Extract replicate number
+
+# Calculate Mean and SE for Each Condition
+flot1_bound_mean_se_data <- flot1_bound %>%
+  group_by(Index, HA_Type) %>%
+  summarise(
+    Mean = mean(Value, na.rm = TRUE),
+    SE = sd(Value, na.rm = TRUE) / sqrt(n()),
+    .groups = "drop"  # Avoid regrouping message
+  )
+
+# Plot the Data for the bound condition
+flot1_barplot_bound <- ggplot(flot1_bound_mean_se_data, aes(x = Index, y = Mean, fill = HA_Type)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.7), width = 0.6) +
+  geom_errorbar(aes(ymin = Mean - SE, ymax = Mean + SE), width = 0.4, size = 1, position = position_dodge(width = 0.7)) +
+  labs(title = "Flotillin-1: Bound", y = "Intensity", x = "") +
+  scale_fill_manual(values = c("no_HA" = "gray", "plus_HA" = "magenta")) +
+  my_theme() +
+  scale_y_continuous(labels = scales::scientific) +  # Format y-axis values in scientific notation
+  scale_x_discrete(labels = c("O08917_34_34_1_1_C34" = "Cys 34"))  # Manually set x-axis labels
+
+print(flot1_barplot_bound)
+  
+# Extract and reshape the data for the unbound condition
+flot1_flow_through <- brain_flow_through_for_barplots %>%
+  filter(Index == "O08917") %>%
+  select(Index, starts_with("no_HA"), starts_with("plus_HA")) %>%
+  pivot_longer(cols = -Index, names_to = "Condition", values_to = "Value") %>%
+  mutate(Condition = sub("_\\d+$", "", Condition),  # Normalize condition names
+         HA_Type = ifelse(grepl("no_HA", Condition), "no_HA", "plus_HA"),
+         Replicate = sub(".*_", "", Condition))  # Extract replicate number
+
+# Calculate Mean and SE for the unbound condition
+flot1_flow_through_mean_se_data <- flot1_flow_through %>%
+  group_by(HA_Type) %>%
+  summarise(
+    Mean = mean(Value, na.rm = TRUE),
+    SE = sd(Value, na.rm = TRUE) / sqrt(n()),
+    .groups = "drop"  # Avoid regrouping message
+  )
+
+# Plot the Data for the unbound condition
+flot1_barplot_unbound <- ggplot(flot1_flow_through_mean_se_data, aes(x = HA_Type, y = Mean, fill = HA_Type)) +
+  geom_bar(stat = "identity", position = position_dodge(), width = 0.5) +
+  geom_errorbar(aes(ymin = Mean - SE, ymax = Mean + SE), width = 0.4, size = 1, position = position_dodge(0.5)) +
+  labs(title = "Flotillin-1: Unbound", y = "Intensity", x = "") +
+  scale_fill_manual(values = c("no_HA" = "gray", "plus_HA" = "magenta")) +
+  my_theme() +  # Apply the custom theme
+  theme(axis.text.x = element_blank()) +  # Hide x-axis labels
+  scale_y_continuous(labels = scales::scientific)  # Format y-axis values in scientific notation
+
+print(flot1_barplot_unbound)
+
+
+## save the bound and unbound plots as pdf
+ggsave(filename = "flot1_barplot_bound.pdf", plot = flot1_barplot_bound, path = "barplots_known_acyl_sites", width = 8, height = 6)
+ggsave(filename = "flot1_barplot_unbound.pdf", plot = flot1_barplot_unbound, path = "barplots_known_acyl_sites", width = 8, height = 6)
+
+
+# Modify the scale_x_discrete() function to include HTML-like syntax for the label color
+flot1_barplot_bound <- ggplot(flot1_bound_mean_se_data, aes(x = Index, y = Mean, fill = HA_Type)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.7), width = 0.6) +
+  geom_errorbar(aes(ymin = Mean - SE, ymax = Mean + SE), width = 0.4, size = 1, position = position_dodge(width = 0.7)) +
+  labs(title = "Flotillin-1: Bound", y = "Intensity", x = "") +
+  scale_fill_manual(values = c("no_HA" = "gray", "plus_HA" = "magenta")) +
+  my_theme() +
+  scale_y_continuous(labels = scales::scientific) +
+  scale_x_discrete(labels = c("O08917_34_34_1_1_C34" = "<span style='color:blue;'>Cys 34</span>")) +
+  theme(axis.text.x = element_markdown())  # Apply element_markdown() to interpret HTML-like syntax
+
+print(flot1_barplot_bound)
+
+```
+
+
+
+## Dlg4 (PSD-95) bound and unbound
+## Brain
+```{r}
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+# Filter for specific indices and reshape the data
+dlg4_bound <- brain_eluant_for_barplots %>%
+  filter(Index %in% c("Q62108_3_5_2_2_C3C5", "Q62108_626_626_1_1_C626")) %>%
+  select(Index, starts_with("no_HA"), starts_with("plus_HA")) %>%
+  pivot_longer(cols = -Index, names_to = "Condition", values_to = "Value") %>%
+  mutate(Condition = sub("_\\d+$", "", Condition),  # Remove replicate numbers
+         HA_Type = ifelse(grepl("no_HA", Condition), "no_HA", "plus_HA"),
+         Replicate = sub(".*_", "", Condition))  # Extract replicate number
+
+### Calculate Mean and SE for Each Condition
+dlg4_bound_mean_se_data <- dlg4_bound %>%
+  group_by(Index, HA_Type) %>%
+  summarise(
+    Mean = mean(Value, na.rm = TRUE),
+    SE = sd(Value, na.rm = TRUE) / sqrt(n())
+  )
+
+### Plot the Data
+
+dlg4_barplot_bound <- ggplot(dlg4_bound_mean_se_data, aes(x = Index, y = Mean, fill = HA_Type)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.7), width = 0.6) +
+  geom_errorbar(aes(ymin = Mean - SE, ymax = Mean + SE), width = 0.4, size = 1, position = position_dodge(width = 0.7)) +
+  labs(title = "PSD-95: Bound", y = "Intensity", x = "") +
+  scale_fill_manual(values = c("no_HA" = "gray", "plus_HA" = "magenta")) +
+  my_theme() +
+  scale_y_continuous(labels = scales::scientific) +  # Format y-axis values in scientific notation
+  scale_x_discrete(labels = c("Q62108_3_5_2_2_C3C5" = "Cys 3/5", "Q62108_626_626_1_1_C626" = "Cys 626"))  # Manually set x-axis labels
+
+print(dlg4_barplot_bound)
+
+
+# Extract the row for the specific index and reshape
+dlg4_flow_through <- brain_flow_through_for_barplots %>%
+  filter(Index == "Q62108") %>%
+  select(Index, starts_with("no_HA"), starts_with("plus_HA")) %>%
+  pivot_longer(cols = -Index, names_to = "Condition", values_to = "Value") %>%
+  mutate(Condition = sub("_\\d+$", "", Condition),  # Normalize condition names
+         HA_Type = ifelse(grepl("no_HA", Condition), "no_HA", "plus_HA"),
+         Replicate = sub(".*_", "", Condition))  # Extract replicate number
+
+
+dlg4_flow_through_mean_se_data <- dlg4_flow_through %>%
+  group_by(HA_Type) %>%
+  summarise(
+    Mean = mean(Value, na.rm = TRUE),
+    SE = sd(Value, na.rm = TRUE) / sqrt(n())
+  )
+
+dlg4_barplot_unbound <- ggplot(dlg4_flow_through_mean_se_data, aes(x = HA_Type, y = Mean, fill = HA_Type)) +
+  geom_bar(stat = "identity", position = position_dodge(), width = 0.5) +
+  geom_errorbar(aes(ymin = Mean - SE, ymax = Mean + SE), width = 0.4, size = 1, position = position_dodge(0.5)) +
+  labs(title = "PSD-95: Unbound", y = "Intensity", x = "") +
+  scale_fill_manual(values = c("no_HA" = "gray", "plus_HA" = "magenta")) +
+  my_theme() +  # Apply the custom theme
+  theme(axis.text.x = element_blank()) +  # Hide x-axis labels
+  scale_y_continuous(labels = scales::scientific)  # Format y-axis values in scientific notation
+
+print(dlg4_barplot_unbound)
+
+# remove dataframes
+rm(dlg4_flow_through)
+
+
+## save the bound and unbound plots as pdf
+ggsave(filename = "psd95_barplot_bound.pdf", plot = dlg4_barplot_bound, path = "barplots_known_acyl_sites", width = 8, height = 6)
+ggsave(filename = "psd95_barplot_unbound.pdf", plot = dlg4_barplot_unbound, path = "barplots_known_acyl_sites", width = 8, height = 6)
+
+# Modify the scale_x_discrete() function to include HTML-like syntax for the label colors
+dlg4_barplot_bound <- ggplot(dlg4_bound_mean_se_data, aes(x = Index, y = Mean, fill = HA_Type)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.7), width = 0.6) +
+  geom_errorbar(aes(ymin = Mean - SE, ymax = Mean + SE), width = 0.4, size = 1, position = position_dodge(width = 0.7)) +
+  labs(title = "PSD-95: Bound", y = "Intensity", x = "") +
+  scale_fill_manual(values = c("no_HA" = "gray", "plus_HA" = "magenta")) +
+  my_theme() +
+  scale_y_continuous(labels = scales::scientific) +
+  scale_x_discrete(labels = c("Q62108_3_5_2_2_C3C5" = "<span style='color:blue;'>Cys 3 / 5</span>", "Q62108_626_626_1_1_C626" = "<span style='color:red;'>Cys 626</span>")) +
+  theme(axis.text.x = element_markdown())
+
+print(dlg4_barplot_bound)
+
+
+```
+
+
+
+
+# Akap5
+# Brain
+```{r}
+
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+# Filter for specific indices and reshape the data for the bound condition
+akap5_bound <- brain_eluant_for_barplots %>%
+  filter(Index %in% c("D3YVF0_36_36_1_1_C36", "D3YVF0_123_123_1_1_C123")) %>%
+  select(Index, starts_with("no_HA"), starts_with("plus_HA")) %>%
+  pivot_longer(cols = -Index, names_to = "Condition", values_to = "Value") %>%
+  mutate(Condition = sub("_\\d+$", "", Condition),  # Remove replicate numbers
+         HA_Type = ifelse(grepl("no_HA", Condition), "no_HA", "plus_HA"),
+         Replicate = sub(".*_", "", Condition))  # Extract replicate number
+
+# Calculate Mean and SE for Each Condition
+akap5_bound_mean_se_data <- akap5_bound %>%
+  group_by(Index, HA_Type) %>%
+  summarise(
+    Mean = mean(Value, na.rm = TRUE),
+    SE = sd(Value, na.rm = TRUE) / sqrt(n()),
+    .groups = "drop"  # Avoid regrouping message
+  )
+
+# Plot the Data for the bound condition
+akap5_barplot_bound <- ggplot(akap5_bound_mean_se_data, aes(x = Index, y = Mean, fill = HA_Type)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.7), width = 0.6) +
+  geom_errorbar(aes(ymin = Mean - SE, ymax = Mean + SE), width = 0.4, size = 1, position = position_dodge(width = 0.7)) +
+  labs(title = "Akap5: Bound", y = "Intensity", x = "") +
+  scale_fill_manual(values = c("no_HA" = "gray", "plus_HA" = "magenta")) +
+  my_theme() +
+  scale_y_continuous(labels = scales::scientific) +  # Format y-axis values in scientific notation
+  scale_x_discrete(labels = c("D3YVF0_36_36_1_1_C36" = "Cys 36", "D3YVF0_123_123_1_1_C123" = "Cys 123"))  # Manually set x-axis labels
+
+print(akap5_barplot_bound)
+  
+# Extract and reshape the data for the unbound condition
+akap5_flow_through <- brain_flow_through_for_barplots %>%
+  filter(Index == "D3YVF0") %>%
+  select(Index, starts_with("no_HA"), starts_with("plus_HA")) %>%
+  pivot_longer(cols = -Index, names_to = "Condition", values_to = "Value") %>%
+  mutate(Condition = sub("_\\d+$", "", Condition),  # Normalize condition names
+         HA_Type = ifelse(grepl("no_HA", Condition), "no_HA", "plus_HA"),
+         Replicate = sub(".*_", "", Condition))  # Extract replicate number
+
+# Calculate Mean and SE for the unbound condition
+akap5_flow_through_mean_se_data <- akap5_flow_through %>%
+  group_by(HA_Type) %>%
+  summarise(
+    Mean = mean(Value, na.rm = TRUE),
+    SE = sd(Value, na.rm = TRUE) / sqrt(n()),
+    .groups = "drop"  # Avoid regrouping message
+  )
+
+# Plot the Data for the unbound condition
+akap5_barplot_unbound <- ggplot(akap5_flow_through_mean_se_data, aes(x = HA_Type, y = Mean, fill = HA_Type)) +
+  geom_bar(stat = "identity", position = position_dodge(), width = 0.5) +
+  geom_errorbar(aes(ymin = Mean - SE, ymax = Mean + SE), width = 0.4, size = 1, position = position_dodge(0.5)) +
+  labs(title = "Akap5: Unbound", y = "Intensity", x = "") +
+  scale_fill_manual(values = c("no_HA" = "gray", "plus_HA" = "magenta")) +
+  my_theme() +  # Apply the custom theme
+  theme(axis.text.x = element_blank()) +  # Hide x-axis labels
+  scale_y_continuous(labels = scales::scientific)  # Format y-axis values in scientific notation
+
+print(akap5_barplot_unbound)
+
+
+## save the bound and unbound plots as pdf
+ggsave(filename = "akap5_barplot_bound.pdf", plot = akap5_barplot_bound, path = "barplots_known_acyl_sites", width = 8, height = 6)
+ggsave(filename = "akap5_barplot_unbound.pdf", plot = akap5_barplot_unbound, path = "barplots_known_acyl_sites", width = 8, height = 6)
+
+
+## Red and blue labels
+akap5_barplot_bound <- ggplot(akap5_bound_mean_se_data, aes(x = Index, y = Mean, fill = HA_Type)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.7), width = 0.6) +
+  geom_errorbar(aes(ymin = Mean - SE, ymax = Mean + SE), width = 0.4, size = 1, position = position_dodge(width = 0.7)) +
+  labs(title = "Akap5: Bound", y = "Intensity", x = "") +
+  scale_fill_manual(values = c("no_HA" = "gray", "plus_HA" = "magenta")) +
+  my_theme() +
+  scale_y_continuous(labels = scales::scientific) +
+  scale_x_discrete(labels = c("D3YVF0_36_36_1_1_C36" = "<span style='color:blue;'>Cys 36</span>", 
+                              "D3YVF0_123_123_1_1_C123" = "<span style='color:blue;'>Cys 123</span>")) +
+  theme(axis.text.x = element_markdown())
+
+print(akap5_barplot_bound)
+
+
+
+```
+
+
+
+
+# Ckap4 (ckap4)
+# MLE12 data
+
+```{r}
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+# Filter for specific indices and reshape the data
+ckap4_bound <- MLE_eluant_for_barplots %>%
+  filter(Index %in% c("Q8BMK4_79_79_1_1_C79")) %>%
+  select(Index, starts_with("no_HA"), starts_with("plus_HA")) %>%
+  pivot_longer(cols = -Index, names_to = "Condition", values_to = "Value") %>%
+  mutate(Condition = sub("_\\d+$", "", Condition),  # Remove replicate numbers
+         HA_Type = ifelse(grepl("no_HA", Condition), "no_HA", "plus_HA"),
+         Replicate = sub(".*_", "", Condition))  # Extract replicate number
+
+### Calculate Mean and SE for Each Condition
+ckap4_bound_mean_se_data <- ckap4_bound %>%
+  group_by(Index, HA_Type) %>%
+  summarise(
+    Mean = mean(Value, na.rm = TRUE),
+    SE = sd(Value, na.rm = TRUE) / sqrt(n())
+  )
+
+### Plot the Data
+
+ckap4_barplot_bound <- ggplot(ckap4_bound_mean_se_data, aes(x = Index, y = Mean, fill = HA_Type)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.7), width = 0.6) +
+  geom_errorbar(aes(ymin = Mean - SE, ymax = Mean + SE), width = 0.4, size = 1, position = position_dodge(width = 0.7)) +
+  labs(title = "Ckap4: Bound", y = "Intensity", x = "") +
+  scale_fill_manual(values = c("no_HA" = "gray", "plus_HA" = "magenta")) +
+  my_theme() +
+  scale_y_continuous(labels = scales::scientific) +  # Format y-axis values in scientific notation
+  scale_x_discrete(labels = c("Q8BMK4_79_79_1_1_C79" = "Cys 79"))  # Manually set x-axis labels
+
+print(ckap4_barplot_bound)
+
+
+# Extract the row for the specific index and reshape
+ckap4_flow_through <- MLE_flow_through_for_barplots %>%
+  filter(Index == "Q8BMK4") %>%
+  select(Index, starts_with("no_HA"), starts_with("plus_HA")) %>%
+  pivot_longer(cols = -Index, names_to = "Condition", values_to = "Value") %>%
+  mutate(Condition = sub("_\\d+$", "", Condition),  # Normalize condition names
+         HA_Type = ifelse(grepl("no_HA", Condition), "no_HA", "plus_HA"),
+         Replicate = sub(".*_", "", Condition))  # Extract replicate number
+
+
+ckap4_flow_through_mean_se_data <- ckap4_flow_through %>%
+  group_by(HA_Type) %>%
+  summarise(
+    Mean = mean(Value, na.rm = TRUE),
+    SE = sd(Value, na.rm = TRUE) / sqrt(n())
+  )
+
+ckap4_barplot_unbound <- ggplot(ckap4_flow_through_mean_se_data, aes(x = HA_Type, y = Mean, fill = HA_Type)) +
+  geom_bar(stat = "identity", position = position_dodge(), width = 0.5) +
+  geom_errorbar(aes(ymin = Mean - SE, ymax = Mean + SE), width = 0.4, size = 1, position = position_dodge(0.5)) +
+  labs(title = "Ckap4: Unbound", y = "Intensity", x = "") +
+  scale_fill_manual(values = c("no_HA" = "gray", "plus_HA" = "magenta")) +
+  my_theme() +  # Apply the custom theme
+  theme(axis.text.x = element_blank()) +  # Hide x-axis labels
+  scale_y_continuous(labels = scales::scientific)  # Format y-axis values in scientific notation
+
+print(ckap4_barplot_unbound)
+
+# remove dataframes
+rm(ckap4_flow_through)
+
+
+## save the bound and unbound plots as pdf
+ggsave(filename = "ckap4_barplot_bound.pdf", plot = ckap4_barplot_bound, path = "barplots_known_acyl_sites", width = 8, height = 6)
+ggsave(filename = "ckap4_barplot_unbound.pdf", plot = ckap4_barplot_unbound, path = "barplots_known_acyl_sites", width = 8, height = 6)
+
+
+## red and blue labels
+ckap4_barplot_bound <- ggplot(ckap4_bound_mean_se_data, aes(x = Index, y = Mean, fill = HA_Type)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.7), width = 0.6) +
+  geom_errorbar(aes(ymin = Mean - SE, ymax = Mean + SE), width = 0.4, size = 1, position = position_dodge(width = 0.7)) +
+  labs(title = "Ckap4: Bound", y = "Intensity", x = "") +
+  scale_fill_manual(values = c("no_HA" = "gray", "plus_HA" = "magenta")) +
+  my_theme() +
+  scale_y_continuous(labels = scales::scientific) +
+  scale_x_discrete(labels = c("Q8BMK4_79_79_1_1_C79" = "<span style='color:blue;'>Cys 79</span>")) +  # Manually set x-axis label with color
+  theme(axis.text.x = element_markdown())  # Use element_markdown for the x-axis labels to interpret HTML-like syntax
+
+# Print the plot
+print(ckap4_barplot_bound)
+
+
+
+```
+
+
+
+# Snap23
+# MLE12 data
+
+```{r}
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+# Filter for specific indices and reshape the data
+Snap23_bound <- MLE_eluant_for_barplots %>%
+  filter(Index %in% c("O09044_79_87_5_5_C79C80C83C85C87")) %>%
+  select(Index, starts_with("no_HA"), starts_with("plus_HA")) %>%
+  pivot_longer(cols = -Index, names_to = "Condition", values_to = "Value") %>%
+  mutate(Condition = sub("_\\d+$", "", Condition),  # Remove replicate numbers
+         HA_Type = ifelse(grepl("no_HA", Condition), "no_HA", "plus_HA"),
+         Replicate = sub(".*_", "", Condition))  # Extract replicate number
+
+### Calculate Mean and SE for Each Condition
+Snap23_bound_mean_se_data <- Snap23_bound %>%
+  group_by(Index, HA_Type) %>%
+  summarise(
+    Mean = mean(Value, na.rm = TRUE),
+    SE = sd(Value, na.rm = TRUE) / sqrt(n())
+  )
+
+### Plot the Data
+Snap23_barplot_bound <- ggplot(Snap23_bound_mean_se_data, aes(x = Index, y = Mean, fill = HA_Type)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.7), width = 0.6) +
+  geom_errorbar(aes(ymin = Mean - SE, ymax = Mean + SE), width = 0.4, size = 1, position = position_dodge(width = 0.7)) +
+  labs(title = "Snap23: Bound", y = "Intensity", x = "") +
+  scale_fill_manual(values = c("no_HA" = "gray", "plus_HA" = "magenta")) +
+  my_theme() +
+  scale_y_continuous(labels = scales::scientific) +  # Format y-axis values in scientific notation
+  scale_x_discrete(labels = c("O09044_79_87_5_5_C79C80C83C85C87" = "Cys 79/80/83/87"))  # Manually set x-axis labels
+
+print(Snap23_barplot_bound)
+
+
+# Extract the row for the specific index and reshape
+Snap23_flow_through <- MLE_flow_through_for_barplots %>%
+  filter(Index == "O09044") %>%
+  select(Index, starts_with("no_HA"), starts_with("plus_HA")) %>%
+  pivot_longer(cols = -Index, names_to = "Condition", values_to = "Value") %>%
+  mutate(Condition = sub("_\\d+$", "", Condition),  # Normalize condition names
+         HA_Type = ifelse(grepl("no_HA", Condition), "no_HA", "plus_HA"),
+         Replicate = sub(".*_", "", Condition))  # Extract replicate number
+
+
+Snap23_flow_through_mean_se_data <- Snap23_flow_through %>%
+  group_by(HA_Type) %>%
+  summarise(
+    Mean = mean(Value, na.rm = TRUE),
+    SE = sd(Value, na.rm = TRUE) / sqrt(n())
+  )
+
+Snap23_barplot_unbound <- ggplot(Snap23_flow_through_mean_se_data, aes(x = HA_Type, y = Mean, fill = HA_Type)) +
+  geom_bar(stat = "identity", position = position_dodge(), width = 0.5) +
+  geom_errorbar(aes(ymin = Mean - SE, ymax = Mean + SE), width = 0.4, size = 1, position = position_dodge(0.5)) +
+  labs(title = "Snap23: Unbound", y = "Intensity", x = "") +
+  scale_fill_manual(values = c("no_HA" = "gray", "plus_HA" = "magenta")) +
+  my_theme() +  # Apply the custom theme
+  theme(axis.text.x = element_blank()) +  # Hide x-axis labels
+  scale_y_continuous(labels = scales::scientific)  # Format y-axis values in scientific notation
+
+print(Snap23_barplot_unbound)
+
+# remove dataframes
+rm(Snap23_flow_through)
+
+
+## save the bound and unbound plots as pdf
+ggsave(filename = "Snap23_barplot_bound.pdf", plot = Snap23_barplot_bound, path = "barplots_known_acyl_sites", width = 8, height = 6)
+ggsave(filename = "Snap23_barplot_unbound.pdf", plot = Snap23_barplot_unbound, path = "barplots_known_acyl_sites", width = 8, height = 6)
+
+
+# blue / red labels
+Snap23_barplot_bound <- ggplot(Snap23_bound_mean_se_data, aes(x = Index, y = Mean, fill = HA_Type)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.7), width = 0.6) +
+  geom_errorbar(aes(ymin = Mean - SE, ymax = Mean + SE), width = 0.4, size = 1, position = position_dodge(width = 0.7)) +
+  labs(title = "Snap23: Bound", y = "Intensity", x = "") +
+  scale_fill_manual(values = c("no_HA" = "gray", "plus_HA" = "magenta")) +
+  my_theme() +
+  scale_y_continuous(labels = scales::scientific) +
+  scale_x_discrete(labels = c("O09044_79_87_5_5_C79C80C83C85C87" = "<span style='color:blue;'>Cys 79/80/83/87</span>")) +  # Manually set x-axis label with color
+  theme(axis.text.x = element_markdown())  # Use element_markdown for the x-axis labels to interpret HTML-like syntax
+
+# Print the plot
+print(Snap23_barplot_bound)
+
+```
+

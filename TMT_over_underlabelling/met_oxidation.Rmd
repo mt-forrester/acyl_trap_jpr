@@ -1,0 +1,179 @@
+---
+title: "Met Oxidation"
+output: html_document
+date: "2024-02-12"
+---
+
+
+## Analysis of Met oxidation
+# Are Met oxidations present in the fragpipe ion (precursor) output?
+
+## Read in the data from bound and unbound MLE and brain experiments - allowed overlabeling
+```{r}
+
+ion_brain_bound_overlabeling_allowed <- read_delim("fragpipe_ion_outputs/ion_brain_bound_overlabeling_allowed.tsv", 
+    delim = "\t", escape_double = FALSE, 
+    trim_ws = TRUE)
+
+ion_brain_unbound_overlabeling_allowed <- read_delim("fragpipe_ion_outputs/ion_brain_unbound_overlabeling_allowed.tsv", 
+    delim = "\t", escape_double = FALSE, 
+    trim_ws = TRUE)
+
+ion_MLE_bound_overlabeling_allowed <- read_delim("fragpipe_ion_outputs/ion_MLE_bound_overlabeling_allowed.tsv", 
+    delim = "\t", escape_double = FALSE, 
+    trim_ws = TRUE)
+
+ion_MLE_unbound_overlabeling_allowed <- read_delim("fragpipe_ion_outputs/ion_MLE_unbound_overlabeling_allowed.tsv", 
+    delim = "\t", escape_double = FALSE, 
+    trim_ws = TRUE)
+
+```
+
+
+
+##### Met Oxidation
+
+## Define function to count number of oxidized Met residues per row (precursor ion)
+
+```{r}
+
+met_oxidation <- function(df) {
+  # Capture the name of the input dataframe
+  df_name <- deparse(substitute(df))
+
+  # Remove rows with 'contam' in the beginning of the 'Protein' column
+  df <- df[!grepl("^contam", df$Protein), ]
+
+  # Function to count occurrences of "M(15.9949)"
+  df$met_oxidation_present <- sapply(df$`Assigned Modifications`, function(mod_string) {
+    if (is.na(mod_string)) {
+      return(0)  # Return 0 for NA values
+    }
+    # Extract all instances of the pattern and count
+    pattern_matches <- regmatches(mod_string, gregexpr("M\\(15.9949\\)", mod_string))
+    return(length(unlist(pattern_matches)))
+  })
+
+  # Return the modified dataframe
+  df
+}
+
+
+```
+
+
+# Apply Met oxidation function to the precursor data
+```{r}
+
+ion_brain_bound_overlabeling_allowed <- met_oxidation(ion_brain_bound_overlabeling_allowed)
+ion_brain_unbound_overlabeling_allowed <- met_oxidation(ion_brain_unbound_overlabeling_allowed)
+ion_MLE_bound_overlabeling_allowed <- met_oxidation(ion_MLE_bound_overlabeling_allowed)
+ion_MLE_unbound_overlabeling_allowed <- met_oxidation(ion_MLE_unbound_overlabeling_allowed)
+
+```
+
+
+
+## Visualize Met oxidations
+```{r}
+
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+
+# Function to prepare data for a given dataframe
+prepare_data <- function(df, dataset_name) {
+  df %>%
+    group_by(met_oxidation_present) %>%
+    summarise(Count = n()) %>%
+    mutate(Dataset = dataset_name)
+}
+
+# Preparing data for each dataset
+data_brain_bound <- prepare_data(ion_brain_bound_overlabeling_allowed, "brain_bound")
+data_brain_unbound <- prepare_data(ion_brain_unbound_overlabeling_allowed, "brain_unbound")
+data_MLE_bound <- prepare_data(ion_MLE_bound_overlabeling_allowed, "MLE_bound")
+data_MLE_unbound <- prepare_data(ion_MLE_unbound_overlabeling_allowed, "MLE_unbound")
+
+# Combining all data
+combined_data <- rbind(data_brain_bound, data_brain_unbound, data_MLE_bound, data_MLE_unbound)
+
+# Adding rows for missing Met oxidation levels (0, 1, 2, 3) in each dataset
+complete_data <- complete(combined_data, Dataset, met_oxidation_present, fill = list(Count = 0))
+
+# Calculating total rows per dataset
+totals <- complete_data %>%
+  group_by(Dataset) %>%
+  summarise(Total = sum(Count)) %>%
+  ungroup()
+
+# Merging total counts back into the complete data
+complete_data <- complete_data %>%
+  left_join(totals, by = "Dataset")
+
+# Calculating percentages
+complete_data <- complete_data %>%
+  mutate(Percentage = paste0(round(100 * Count / Total, 1), "%"))
+
+# Creating the bar plot with grouped dataframes, percentages, and no x-axis title
+ggplot(complete_data, aes(x = Dataset, y = Count, fill = as.factor(met_oxidation_present))) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  geom_text(aes(label = paste0(Count, "\n", Percentage), group = met_oxidation_present), 
+            position = position_dodge(width = 0.9), vjust = -0.3) +
+  theme_minimal() +
+  labs(title = "Total Number of Precursors with Methionine Oxidations", x = "", y = "Number of Precursor Ions") +
+  scale_fill_brewer(palette = "Set1", name = "Met Oxidation") +
+  facet_wrap(~ met_oxidation_present, scales = "free_x", ncol = 4) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+```
+
+
+
+```{r}
+
+
+# Combining all data
+combined_data <- rbind(data_brain_bound, data_brain_unbound, data_MLE_bound, data_MLE_unbound)
+
+# Filter out Met oxidation level 3
+filtered_data <- combined_data %>%
+  filter(met_oxidation_present %in% c(0, 1, 2))
+
+# Adding rows for missing Met oxidation levels (0, 1, 2) in each dataset
+complete_data <- complete(filtered_data, Dataset, met_oxidation_present, fill = list(Count = 0))
+
+# Calculating total rows per dataset (remain the same)
+totals <- complete_data %>%
+  group_by(Dataset) %>%
+  summarise(Total = sum(Count)) %>%
+  ungroup()
+
+# Merging total counts back into the complete data (remain the same)
+complete_data <- complete_data %>%
+  left_join(totals, by = "Dataset")
+
+# Calculating percentages
+complete_data <- complete_data %>%
+  mutate(Percentage = round(100 * Count / Total, 1))
+
+# Creating the bar plot with percentages
+ggplot(complete_data, aes(x = Dataset, y = Percentage, fill = as.factor(met_oxidation_present))) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  geom_text(aes(label = paste0(Percentage), group = met_oxidation_present), 
+            position = position_dodge(width = 0.9), vjust = -0.3) +
+  theme_minimal() +
+  labs(title = "Precursor Percentages by Met Oxidation State", x = "", y = "Percentage of Precursor Ions") +
+  scale_fill_brewer(palette = "Set1", name = "Met Oxidation\nState") +
+  facet_wrap(~ met_oxidation_present, scales = "free_x", ncol = 4) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 12), # X-axis text size to 16pt
+        axis.text.y = element_text(size = 12), # Y-axis text size to 16pt
+        axis.title.x = element_text(size = 16), # X-axis title size, adjust if needed
+        axis.title.y = element_text(size = 16), # Y-axis label size to 18pt
+        plot.title = element_text(size = 16, hjust = 0.5)) + # Title size to 20pt
+  ylim(0, 110)
+
+
+```
+

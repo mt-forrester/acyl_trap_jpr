@@ -1,0 +1,184 @@
+---
+title: "CV Measurements"
+output: html_document
+date: "2024-02-11"
+---
+
+## CV Measurements on TMT Fragpipe Output
+## CV calculations are on raw data instead of postprocessed data
+
+
+
+## Read in Unbound (Flowthrough) and Bound (Pulldown)
+## Brain and MLE
+```{r}
+
+## READ IN BRAIN DATA
+
+library(tidyverse)
+
+# read in the flow through
+library(readr)
+brain_flow_through_for_CV <- read_delim("TMT_output_philosopher_for_R_analysis/brain_flowthrough_protein.tsv", 
+    delim = "\t", escape_double = FALSE, 
+    trim_ws = TRUE)
+
+## Reverse the log2 transformation
+# Apply the inverse log2 transformation (2^x) to columns 5 through 21 for all rows
+brain_flow_through_for_CV[, 5:21] <- 2^brain_flow_through_for_CV[, 5:21]
+
+# Rename columns
+rename_cols <- function(df, start_index, end_index, prefix) {
+  colnames(df)[start_index:end_index] <- paste0(prefix, 1:(end_index - start_index + 1))
+  return(df)
+}
+
+brain_flow_through_for_CV <- rename_cols(brain_flow_through_for_CV, 6, 9, "no_HA_")
+brain_flow_through_for_CV <- rename_cols(brain_flow_through_for_CV, 10, 13, "plus_HA_")
+
+# Remove columns
+brain_flow_through_for_CV <- brain_flow_through_for_CV[,-c(14:21)]
+
+
+## Read in the Bound/Eluant data
+brain_eluant_for_CV <- read_delim("TMT_output_philosopher_for_R_analysis/brain_bound_single_site.tsv", 
+    delim = "\t", escape_double = FALSE, 
+    trim_ws = TRUE)
+
+
+# Rename columns
+rename_cols <- function(df, start_index, end_index, prefix) {
+  colnames(df)[start_index:end_index] <- paste0(prefix, 1:(end_index - start_index + 1))
+  return(df)
+}
+
+brain_eluant_for_CV <- rename_cols(brain_eluant_for_CV, 10, 13, "no_HA_")
+brain_eluant_for_CV <- rename_cols(brain_eluant_for_CV, 14, 17, "plus_HA_")
+
+# Remove columns
+brain_eluant_for_CV <- brain_eluant_for_CV[,-c(18:25)]
+
+
+
+
+## READ IN MLE DATA
+
+
+# read in the flow through
+library(readr)
+MLE_flow_through_for_CV <- read_delim("TMT_output_philosopher_for_R_analysis/MLE_flowthrough_protein.tsv", 
+    delim = "\t", escape_double = FALSE, 
+    trim_ws = TRUE)
+
+## Reverse the log2 transformation
+# Apply the inverse log2 transformation (2^x) to columns 5 through 21 for all rows
+MLE_flow_through_for_CV[, 5:21] <- 2^MLE_flow_through_for_CV[, 5:21]
+
+# Rename columns
+rename_cols <- function(df, start_index, end_index, prefix) {
+  colnames(df)[start_index:end_index] <- paste0(prefix, 1:(end_index - start_index + 1))
+  return(df)
+}
+
+MLE_flow_through_for_CV <- rename_cols(MLE_flow_through_for_CV, 6, 9, "no_HA_")
+MLE_flow_through_for_CV <- rename_cols(MLE_flow_through_for_CV, 10, 13, "plus_HA_")
+
+# Remove columns
+MLE_flow_through_for_CV <- MLE_flow_through_for_CV[,-c(14:21)]
+
+
+## Read in the Bound/Eluant data
+MLE_eluant_for_CV <- read_delim("TMT_output_philosopher_for_R_analysis/MLE_bound_single_site.tsv", 
+    delim = "\t", escape_double = FALSE, 
+    trim_ws = TRUE)
+
+
+# Rename columns
+rename_cols <- function(df, start_index, end_index, prefix) {
+  colnames(df)[start_index:end_index] <- paste0(prefix, 1:(end_index - start_index + 1))
+  return(df)
+}
+
+MLE_eluant_for_CV <- rename_cols(MLE_eluant_for_CV, 10, 13, "no_HA_")
+MLE_eluant_for_CV <- rename_cols(MLE_eluant_for_CV, 14, 17, "plus_HA_")
+
+# Remove columns
+MLE_eluant_for_CV <- MLE_eluant_for_CV[,-c(18:25)]
+
+
+
+
+```
+
+
+## CV Calculations
+## MLE and Brain
+```{r}
+
+
+# Adjusted function to compute CV with at least 3 out of 4 values available
+compute_cv <- function(df, columns) {
+  # Initialize a vector to store CV values, filled with NA
+  cv_values <- rep(NA, nrow(df))
+  
+  # Loop over each row
+  for (i in 1:nrow(df)) {
+    # Subset the row for specified columns and remove NA values
+    values <- na.omit(unlist(df[i, columns]))
+    
+    # Check if there are at least 3 non-NA values
+    if (length(values) >= 3) {
+      # Calculate mean and standard deviation for the non-NA values
+      mean_value <- mean(values)
+      sd_value <- sd(values)
+      
+      # Calculate and store the CV if criteria are met
+      cv_values[i] <- 100 * (sd_value / mean_value)
+    }
+  }
+  
+  return(cv_values)
+}
+
+# Convert log2 values back to their original scale
+brain_flow_through_non_log <- brain_flow_through_for_CV
+brain_flow_through_non_log[c("no_HA_1", "no_HA_2", "no_HA_3", "no_HA_4", "plus_HA_1", "plus_HA_2", "plus_HA_3", "plus_HA_4")] <- 2^brain_flow_through_for_CV[c("no_HA_1", "no_HA_2", "no_HA_3", "no_HA_4", "plus_HA_1", "plus_HA_2", "plus_HA_3", "plus_HA_4")]
+
+brain_eluant_non_log <- brain_eluant_for_CV
+brain_eluant_non_log[c("no_HA_1", "no_HA_2", "no_HA_3", "no_HA_4", "plus_HA_1", "plus_HA_2", "plus_HA_3", "plus_HA_4")] <- 2^brain_eluant_for_CV[c("no_HA_1", "no_HA_2", "no_HA_3", "no_HA_4", "plus_HA_1", "plus_HA_2", "plus_HA_3", "plus_HA_4")]
+
+# Compute CV for brain_flow_through using non-log2 transformed values
+brain_flow_through_for_CV$CV_no_HA <- compute_cv(brain_flow_through_non_log, c("no_HA_1", "no_HA_2", "no_HA_3", "no_HA_4"))
+brain_flow_through_for_CV$CV_plus_HA <- compute_cv(brain_flow_through_non_log, c("plus_HA_1", "plus_HA_2", "plus_HA_3", "plus_HA_4"))
+
+# Compute CV for brain_eluant using non-log2 transformed values
+brain_eluant_for_CV$CV_no_HA <- compute_cv(brain_eluant_non_log, c("no_HA_1", "no_HA_2", "no_HA_3", "no_HA_4"))
+brain_eluant_for_CV$CV_plus_HA <- compute_cv(brain_eluant_non_log, c("plus_HA_1", "plus_HA_2", "plus_HA_3", "plus_HA_4"))
+
+
+
+
+# Convert log2 values back to their original scale
+MLE_flow_through_non_log <- MLE_flow_through_for_CV
+MLE_flow_through_non_log[c("no_HA_1", "no_HA_2", "no_HA_3", "no_HA_4", "plus_HA_1", "plus_HA_2", "plus_HA_3", "plus_HA_4")] <- 2^MLE_flow_through_for_CV[c("no_HA_1", "no_HA_2", "no_HA_3", "no_HA_4", "plus_HA_1", "plus_HA_2", "plus_HA_3", "plus_HA_4")]
+
+MLE_eluant_non_log <- MLE_eluant_for_CV
+MLE_eluant_non_log[c("no_HA_1", "no_HA_2", "no_HA_3", "no_HA_4", "plus_HA_1", "plus_HA_2", "plus_HA_3", "plus_HA_4")] <- 2^MLE_eluant_for_CV[c("no_HA_1", "no_HA_2", "no_HA_3", "no_HA_4", "plus_HA_1", "plus_HA_2", "plus_HA_3", "plus_HA_4")]
+
+# Compute CV for MLE_flow_through using non-log2 transformed values
+MLE_flow_through_for_CV$CV_no_HA <- compute_cv(MLE_flow_through_non_log, c("no_HA_1", "no_HA_2", "no_HA_3", "no_HA_4"))
+MLE_flow_through_for_CV$CV_plus_HA <- compute_cv(MLE_flow_through_non_log, c("plus_HA_1", "plus_HA_2", "plus_HA_3", "plus_HA_4"))
+
+# Compute CV for MLE_eluant using non-log2 transformed values
+MLE_eluant_for_CV$CV_no_HA <- compute_cv(MLE_eluant_non_log, c("no_HA_1", "no_HA_2", "no_HA_3", "no_HA_4"))
+MLE_eluant_for_CV$CV_plus_HA <- compute_cv(MLE_eluant_non_log, c("plus_HA_1", "plus_HA_2", "plus_HA_3", "plus_HA_4"))
+
+
+
+
+
+
+
+```
+
+

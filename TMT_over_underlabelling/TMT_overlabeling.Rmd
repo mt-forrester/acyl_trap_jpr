@@ -1,0 +1,458 @@
+---
+title: "TMT Over and Underlabeling Analysis"
+output: html_document
+date: "2024-01-28"
+---
+
+## Overlabeling Analysis - VARIABLE LYS/N-TERM MOD
+
+## Import fragpipe ion level data
+## There are 8 relevant fragpipe outputs: These are two different search criteria (allowing or omitting overlabelling) for each of the 4 samples (Brain Bound, Brain Unbound, MLE12 Bound, MLE12 Unbound)
+
+## This method is different from Carr MCP Paper - here Lys modification is variable and this seems to result in many non-amino TMT assignments - in other words fragpipe appears to assign many N-terminal modifications to the first few side chains, but unlikely the fragmentation data would support these assignments
+
+```{r}
+
+library(readr)
+ion_brain_bound_overlabeling_omitted <- read_delim("fragpipe_ion_outputs/ion_brain_bound_overlabeling_omitted.tsv", 
+    delim = "\t", escape_double = FALSE, 
+    trim_ws = TRUE)
+
+ion_brain_unbound_overlabeling_omitted <- read_delim("fragpipe_ion_outputs/ion_brain_unbound_overlabeling_omitted.tsv", 
+    delim = "\t", escape_double = FALSE, 
+    trim_ws = TRUE)
+
+ion_MLE_bound_overlabeling_omitted <- read_delim("fragpipe_ion_outputs/ion_MLE_bound_overlabeling_omitted.tsv", 
+    delim = "\t", escape_double = FALSE, 
+    trim_ws = TRUE)
+
+ion_MLE_unbound_overlabeling_omitted <- read_delim("fragpipe_ion_outputs/ion_MLE_unbound_overlabeling_omitted.tsv", 
+    delim = "\t", escape_double = FALSE, 
+    trim_ws = TRUE)
+
+ion_brain_bound_overlabeling_allowed <- read_delim("fragpipe_ion_outputs/ion_brain_bound_overlabeling_allowed.tsv", 
+    delim = "\t", escape_double = FALSE, 
+    trim_ws = TRUE)
+
+ion_brain_unbound_overlabeling_allowed <- read_delim("fragpipe_ion_outputs/ion_brain_unbound_overlabeling_allowed.tsv", 
+    delim = "\t", escape_double = FALSE, 
+    trim_ws = TRUE)
+
+ion_MLE_bound_overlabeling_allowed <- read_delim("fragpipe_ion_outputs/ion_MLE_bound_overlabeling_allowed.tsv", 
+    delim = "\t", escape_double = FALSE, 
+    trim_ws = TRUE)
+
+ion_MLE_unbound_overlabeling_allowed <- read_delim("fragpipe_ion_outputs/ion_MLE_unbound_overlabeling_allowed.tsv", 
+    delim = "\t", escape_double = FALSE, 
+    trim_ws = TRUE)
+
+```
+
+
+
+## Define a function to determine percentage of overlabelled precursors
+# Here the denominator is rows, meaning this asks what percentage of precursor ions have these non-amino TMT acylations
+```{r}
+
+overlabelling <- function(df) {
+  # Capture the name of the input dataframe
+  df_name <- deparse(substitute(df))
+
+  # Remove rows with 'contam' in the beginning of the 'Protein' column
+  df <- df[!grepl("^contam", df$Protein), ]
+
+  # Function to calculate percentage of overlabelled precursors
+  calculate_percentage <- function(sub_df, letter) {
+    count <- sum(grepl(paste0(letter, "\\(304.2071\\)"), sub_df$`Assigned Modifications`), na.rm = TRUE)
+    return(100 * count / nrow(sub_df))
+  }
+
+  # Calculate percentages for Y, S, T, and H
+  for (letter in c("Y", "S", "T", "H")) {
+    percentage <- calculate_percentage(df, letter)
+    assign(paste0(df_name, "_overlabelled_percentage_", letter), percentage, envir = .GlobalEnv)
+  }
+
+  # Return the modified dataframe
+  df
+}
+
+
+```
+
+
+## Apply the overlabeling function
+## Visualize
+```{r}
+
+ion_brain_bound_overlabeling_allowed <- overlabelling(ion_brain_bound_overlabeling_allowed)
+ion_brain_unbound_overlabeling_allowed <- overlabelling(ion_brain_unbound_overlabeling_allowed)
+ion_MLE_bound_overlabeling_allowed <- overlabelling(ion_MLE_bound_overlabeling_allowed)
+ion_MLE_unbound_overlabeling_allowed <- overlabelling(ion_MLE_unbound_overlabeling_allowed)
+
+## Visualize the overlabelling
+
+# Manually creating a dataframe with the overlabelled percentage values
+data_to_plot <- data.frame(
+  Dataset = rep(c("brain_bound", "brain_unbound", "MLE_bound", "MLE_unbound"), each = 4),
+  Modification = rep(c("Ser", "Tyr", "Thr", "His"), 4),
+  Percentage = c(
+    ion_brain_bound_overlabeling_allowed_overlabelled_percentage_S,
+    ion_brain_bound_overlabeling_allowed_overlabelled_percentage_Y,
+    ion_brain_bound_overlabeling_allowed_overlabelled_percentage_T,
+    ion_brain_bound_overlabeling_allowed_overlabelled_percentage_H,
+    ion_brain_unbound_overlabeling_allowed_overlabelled_percentage_S,
+    ion_brain_unbound_overlabeling_allowed_overlabelled_percentage_Y,
+    ion_brain_unbound_overlabeling_allowed_overlabelled_percentage_T,
+    ion_brain_unbound_overlabeling_allowed_overlabelled_percentage_H,
+    ion_MLE_bound_overlabeling_allowed_overlabelled_percentage_S,
+    ion_MLE_bound_overlabeling_allowed_overlabelled_percentage_Y,
+    ion_MLE_bound_overlabeling_allowed_overlabelled_percentage_T,
+    ion_MLE_bound_overlabeling_allowed_overlabelled_percentage_H,
+    ion_MLE_unbound_overlabeling_allowed_overlabelled_percentage_S,
+    ion_MLE_unbound_overlabeling_allowed_overlabelled_percentage_Y,
+    ion_MLE_unbound_overlabeling_allowed_overlabelled_percentage_T,
+    ion_MLE_unbound_overlabeling_allowed_overlabelled_percentage_H
+  )
+)
+
+# Creating the bar plot
+ggplot(data_to_plot, aes(x = interaction(Dataset, Modification), y = Percentage, fill = Modification)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  theme_minimal() +
+  labs(title = "Overlabelling Percentage for Different Modifications\nPer Precursor Ion", x = "Dataset and Modification", y = "Percentage Overlabelled (%)") +
+  scale_y_continuous(limits = c(0, 50)) +
+  scale_fill_brewer(palette = "Set1") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Adjust x-axis labels angle
+
+
+```
+
+
+
+## Define a function to determine percentage of overlabelled precursors
+# Here the denominator is not precursor ions but rather total number of the given amino acids
+# This answers the questions of "what percentage of all Tyr are TMT labelled, same for Ser, Thr, His
+```{r}
+
+overlabelling <- function(df) {
+  # Capture the name of the input dataframe
+  df_name <- deparse(substitute(df))
+
+  # Remove rows with 'contam' in the beginning of the 'Protein' column
+  df <- df[!grepl("^contam", df$Protein), ]
+
+  # Function to calculate the total count of a specific amino acid in all peptide sequences
+  total_amino_acid_count <- function(sub_df, letter) {
+    sum(sapply(sub_df$`Peptide Sequence`, function(peptide) sum(strsplit(peptide, "")[[1]] == letter)), na.rm = TRUE)
+  }
+
+  # Function to calculate percentage of overlabelled precursors based on the amino acid count
+  calculate_percentage <- function(sub_df, letter) {
+    # Count how many times the specific mass tag is found in association with the amino acid
+    overlabelled_count <- sum(grepl(paste0(letter, "\\(304.2071\\)"), sub_df$`Assigned Modifications`), na.rm = TRUE)
+    # Get the total count of the amino acid in all peptide sequences
+    amino_acid_total_count <- total_amino_acid_count(sub_df, letter)
+    # Calculate the percentage
+    if (amino_acid_total_count > 0) {
+      return(100 * overlabelled_count / amino_acid_total_count)
+    } else {
+      return(NA)  # Return NA if the amino acid is not found in any peptide sequences
+    }
+  }
+
+  # Calculate percentages for Y, S, T, and H
+  for (letter in c("Y", "S", "T", "H")) {
+    percentage <- calculate_percentage(df, letter)
+    assign(paste0(df_name, "_overlabelled_percentage_", letter), percentage, envir = .GlobalEnv)
+  }
+
+  # Return the modified dataframe
+  return(df)
+}
+
+```
+
+
+
+## Apply the overlabeling function
+## Visualize
+```{r}
+
+ion_brain_bound_overlabeling_allowed <- overlabelling(ion_brain_bound_overlabeling_allowed)
+ion_brain_unbound_overlabeling_allowed <- overlabelling(ion_brain_unbound_overlabeling_allowed)
+ion_MLE_bound_overlabeling_allowed <- overlabelling(ion_MLE_bound_overlabeling_allowed)
+ion_MLE_unbound_overlabeling_allowed <- overlabelling(ion_MLE_unbound_overlabeling_allowed)
+
+## Visualize the overlabelling
+
+# Manually creating a dataframe with the overlabelled percentage values
+data_to_plot <- data.frame(
+  Dataset = rep(c("brain_bound", "brain_unbound", "MLE_bound", "MLE_unbound"), each = 4),
+  Modification = rep(c("Ser", "Tyr", "Thr", "His"), 4),
+  Percentage = c(
+    ion_brain_bound_overlabeling_allowed_overlabelled_percentage_S,
+    ion_brain_bound_overlabeling_allowed_overlabelled_percentage_Y,
+    ion_brain_bound_overlabeling_allowed_overlabelled_percentage_T,
+    ion_brain_bound_overlabeling_allowed_overlabelled_percentage_H,
+    ion_brain_unbound_overlabeling_allowed_overlabelled_percentage_S,
+    ion_brain_unbound_overlabeling_allowed_overlabelled_percentage_Y,
+    ion_brain_unbound_overlabeling_allowed_overlabelled_percentage_T,
+    ion_brain_unbound_overlabeling_allowed_overlabelled_percentage_H,
+    ion_MLE_bound_overlabeling_allowed_overlabelled_percentage_S,
+    ion_MLE_bound_overlabeling_allowed_overlabelled_percentage_Y,
+    ion_MLE_bound_overlabeling_allowed_overlabelled_percentage_T,
+    ion_MLE_bound_overlabeling_allowed_overlabelled_percentage_H,
+    ion_MLE_unbound_overlabeling_allowed_overlabelled_percentage_S,
+    ion_MLE_unbound_overlabeling_allowed_overlabelled_percentage_Y,
+    ion_MLE_unbound_overlabeling_allowed_overlabelled_percentage_T,
+    ion_MLE_unbound_overlabeling_allowed_overlabelled_percentage_H
+  )
+)
+
+# Creating the bar plot
+ggplot(data_to_plot, aes(x = interaction(Dataset, Modification), y = Percentage, fill = Modification)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  theme_minimal() +
+  labs(title = "Overlabelling Percentage for Different Modifications\nPer Amino Acid", x = "Dataset and Modification", y = "Percentage Overlabelled (%)") +
+  scale_y_continuous(limits = c(0, 50)) +
+  scale_fill_brewer(palette = "Set1") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Adjust x-axis labels angle
+
+
+```
+
+
+
+
+### Overlabelling - FIXED LYS/AMINO MOD
+### Search performed with fixed amino modifications similar to Carr MCP paper (TMT for the Masses)
+
+## Import fragpipe ion level data
+## There are 8 relevant fragpipe outputs: These are two different search criteria (allowing or omitting overlabelling) for each of the 4 samples (Brain Bound, Brain Unbound, MLE12 Bound, MLE12 Unbound)
+
+```{r}
+
+library(readr)
+
+ion_brain_bound_overlabeling_allowed <- read_delim("fragpipe_ion_outputs/for_R_exp18_overlabelled_allowed_amines_fixed/brain_bound_ion.tsv", 
+    delim = "\t", escape_double = FALSE, 
+    trim_ws = TRUE)
+
+ion_brain_unbound_overlabeling_allowed <- read_delim("fragpipe_ion_outputs/for_R_exp18_overlabelled_allowed_amines_fixed/brain_unbound_ion.tsv", 
+    delim = "\t", escape_double = FALSE, 
+    trim_ws = TRUE)
+
+ion_MLE_bound_overlabeling_allowed <- read_delim("fragpipe_ion_outputs/for_R_exp18_overlabelled_allowed_amines_fixed/MLE_bound_ion.tsv", 
+    delim = "\t", escape_double = FALSE, 
+    trim_ws = TRUE)
+
+ion_MLE_unbound_overlabeling_allowed <- read_delim("fragpipe_ion_outputs/for_R_exp18_overlabelled_allowed_amines_fixed/MLE_unbound_ion.tsv", 
+    delim = "\t", escape_double = FALSE, 
+    trim_ws = TRUE)
+
+```
+
+
+
+## Define a function to determine percentage of overlabelled precursors
+# Here the denominator is rows, meaning this asks what percentage of precursor ions have these non-amino TMT acylations
+```{r}
+
+overlabelling <- function(df) {
+  # Capture the name of the input dataframe
+  df_name <- deparse(substitute(df))
+
+  # Remove rows with 'contam' in the beginning of the 'Protein' column
+  df <- df[!grepl("^contam", df$Protein), ]
+
+  # Function to calculate percentage of overlabelled precursors
+  calculate_percentage <- function(sub_df, letter) {
+    count <- sum(grepl(paste0(letter, "\\(304.2071\\)"), sub_df$`Assigned Modifications`), na.rm = TRUE)
+    return(100 * count / nrow(sub_df))
+  }
+
+  # Calculate percentages for Y, S, T, and H
+  for (letter in c("Y", "S", "T", "H")) {
+    percentage <- calculate_percentage(df, letter)
+    assign(paste0(df_name, "_overlabelled_percentage_", letter), percentage, envir = .GlobalEnv)
+  }
+
+  # Return the modified dataframe
+  df
+}
+
+
+```
+
+
+## Define a my_theme
+```{r}
+
+library(ggplot2)
+
+my_barplot_theme <- function() {
+  theme_minimal() +
+    theme(
+      plot.title = element_text(size = 18),            # Title font size
+      axis.title.x = element_text(size = 14),          # X-axis title font size
+      axis.title.y = element_text(size = 20),          # Y-axis title font size
+      axis.text.x = element_text(size = 14),           # X-axis labels font size
+      axis.text.y = element_text(size = 20)            # Y-axis labels font size
+    )
+}
+
+```
+
+
+
+
+
+## Apply the overlabeling function
+## Visualize
+```{r}
+
+ion_brain_bound_overlabeling_allowed <- overlabelling(ion_brain_bound_overlabeling_allowed)
+ion_brain_unbound_overlabeling_allowed <- overlabelling(ion_brain_unbound_overlabeling_allowed)
+ion_MLE_bound_overlabeling_allowed <- overlabelling(ion_MLE_bound_overlabeling_allowed)
+ion_MLE_unbound_overlabeling_allowed <- overlabelling(ion_MLE_unbound_overlabeling_allowed)
+
+## Visualize the overlabelling
+
+# Manually creating a dataframe with the overlabelled percentage values
+data_to_plot <- data.frame(
+  Dataset = rep(c("brain_bound", "brain_unbound", "MLE_bound", "MLE_unbound"), each = 4),
+  Modification = rep(c("Ser", "Tyr", "Thr", "His"), 4),
+  Percentage = c(
+    ion_brain_bound_overlabeling_allowed_overlabelled_percentage_S,
+    ion_brain_bound_overlabeling_allowed_overlabelled_percentage_Y,
+    ion_brain_bound_overlabeling_allowed_overlabelled_percentage_T,
+    ion_brain_bound_overlabeling_allowed_overlabelled_percentage_H,
+    ion_brain_unbound_overlabeling_allowed_overlabelled_percentage_S,
+    ion_brain_unbound_overlabeling_allowed_overlabelled_percentage_Y,
+    ion_brain_unbound_overlabeling_allowed_overlabelled_percentage_T,
+    ion_brain_unbound_overlabeling_allowed_overlabelled_percentage_H,
+    ion_MLE_bound_overlabeling_allowed_overlabelled_percentage_S,
+    ion_MLE_bound_overlabeling_allowed_overlabelled_percentage_Y,
+    ion_MLE_bound_overlabeling_allowed_overlabelled_percentage_T,
+    ion_MLE_bound_overlabeling_allowed_overlabelled_percentage_H,
+    ion_MLE_unbound_overlabeling_allowed_overlabelled_percentage_S,
+    ion_MLE_unbound_overlabeling_allowed_overlabelled_percentage_Y,
+    ion_MLE_unbound_overlabeling_allowed_overlabelled_percentage_T,
+    ion_MLE_unbound_overlabeling_allowed_overlabelled_percentage_H
+  )
+)
+
+# Creating the bar plot
+ggplot(data_to_plot, aes(x = Dataset, y = Percentage, fill = Modification)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  geom_text(aes(label = sprintf("%.1f%%", Percentage)), # Format the label to one decimal place
+            position = position_dodge(width = 0.9),    # Align text in the center of the bars
+            vjust = -0.5,                              # Adjust vertical position to be above the bar
+            size = 3) +                                # Adjust text size, if needed
+  theme_minimal() +
+  labs(title = "TMT Overlabelling: On-Quartz vs Solution Phase",
+       x = "",
+       y = "Overlabelled Precursors (%)",
+       fill = "Amino Acid") +
+  scale_y_continuous(limits = c(0, 30)) +
+  scale_fill_brewer(palette = "Set1") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + # Adjust x-axis labels angle
+  my_barplot_theme()
+  
+```
+
+
+
+## Define a function to determine percentage of overlabelled precursors
+# Here the denominator is not precursor ions but rather total number of the given amino acids
+# This answers the questions of "what percentage of all Tyr are TMT labelled, same for Ser, Thr, His
+```{r}
+
+overlabelling <- function(df) {
+  # Capture the name of the input dataframe
+  df_name <- deparse(substitute(df))
+
+  # Remove rows with 'contam' in the beginning of the 'Protein' column
+  df <- df[!grepl("^contam", df$Protein), ]
+
+  # Function to calculate the total count of a specific amino acid in all peptide sequences
+  total_amino_acid_count <- function(sub_df, letter) {
+    sum(sapply(sub_df$`Peptide Sequence`, function(peptide) sum(strsplit(peptide, "")[[1]] == letter)), na.rm = TRUE)
+  }
+
+  # Function to calculate percentage of overlabelled precursors based on the amino acid count
+  calculate_percentage <- function(sub_df, letter) {
+    # Count how many times the specific mass tag is found in association with the amino acid
+    overlabelled_count <- sum(grepl(paste0(letter, "\\(304.2071\\)"), sub_df$`Assigned Modifications`), na.rm = TRUE)
+    # Get the total count of the amino acid in all peptide sequences
+    amino_acid_total_count <- total_amino_acid_count(sub_df, letter)
+    # Calculate the percentage
+    if (amino_acid_total_count > 0) {
+      return(100 * overlabelled_count / amino_acid_total_count)
+    } else {
+      return(NA)  # Return NA if the amino acid is not found in any peptide sequences
+    }
+  }
+
+  # Calculate percentages for Y, S, T, and H
+  for (letter in c("Y", "S", "T", "H")) {
+    percentage <- calculate_percentage(df, letter)
+    assign(paste0(df_name, "_overlabelled_percentage_", letter), percentage, envir = .GlobalEnv)
+  }
+
+  # Return the modified dataframe
+  return(df)
+}
+
+```
+
+
+
+## Apply the overlabeling function
+## Visualize
+```{r}
+
+ion_brain_bound_overlabeling_allowed <- overlabelling(ion_brain_bound_overlabeling_allowed)
+ion_brain_unbound_overlabeling_allowed <- overlabelling(ion_brain_unbound_overlabeling_allowed)
+ion_MLE_bound_overlabeling_allowed <- overlabelling(ion_MLE_bound_overlabeling_allowed)
+ion_MLE_unbound_overlabeling_allowed <- overlabelling(ion_MLE_unbound_overlabeling_allowed)
+
+## Visualize the overlabelling
+
+# Manually creating a dataframe with the overlabelled percentage values
+data_to_plot <- data.frame(
+  Dataset = rep(c("brain_bound", "brain_unbound", "MLE_bound", "MLE_unbound"), each = 4),
+  Modification = rep(c("Ser", "Tyr", "Thr", "His"), 4),
+  Percentage = c(
+    ion_brain_bound_overlabeling_allowed_overlabelled_percentage_S,
+    ion_brain_bound_overlabeling_allowed_overlabelled_percentage_Y,
+    ion_brain_bound_overlabeling_allowed_overlabelled_percentage_T,
+    ion_brain_bound_overlabeling_allowed_overlabelled_percentage_H,
+    ion_brain_unbound_overlabeling_allowed_overlabelled_percentage_S,
+    ion_brain_unbound_overlabeling_allowed_overlabelled_percentage_Y,
+    ion_brain_unbound_overlabeling_allowed_overlabelled_percentage_T,
+    ion_brain_unbound_overlabeling_allowed_overlabelled_percentage_H,
+    ion_MLE_bound_overlabeling_allowed_overlabelled_percentage_S,
+    ion_MLE_bound_overlabeling_allowed_overlabelled_percentage_Y,
+    ion_MLE_bound_overlabeling_allowed_overlabelled_percentage_T,
+    ion_MLE_bound_overlabeling_allowed_overlabelled_percentage_H,
+    ion_MLE_unbound_overlabeling_allowed_overlabelled_percentage_S,
+    ion_MLE_unbound_overlabeling_allowed_overlabelled_percentage_Y,
+    ion_MLE_unbound_overlabeling_allowed_overlabelled_percentage_T,
+    ion_MLE_unbound_overlabeling_allowed_overlabelled_percentage_H
+  )
+)
+
+# Creating the bar plot
+ggplot(data_to_plot, aes(x = interaction(Dataset, Modification), y = Percentage, fill = Modification)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  theme_minimal() +
+  labs(title = "Overlabelling Percentage for Different Modifications\nPer Amino Acid", x = "Dataset and Modification", y = "Percentage Overlabelled (%)") +
+  scale_y_continuous(limits = c(0, 50)) +
+  scale_fill_brewer(palette = "Set1") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Adjust x-axis labels angle
+
+
+```
+

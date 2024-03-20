@@ -1,0 +1,170 @@
+---
+title: "Precursor Ion Analysis"
+output: html_document
+date: "2024-02-09"
+---
+
+
+## Read in the ion files for brain and MLE (bound and unbound samples)
+```{r}
+
+library(readr)
+brain_bound_ion <- read_delim("TMT_output_philosopher_for_R_analysis/brain_bound_ion.tsv", 
+    delim = "\t", escape_double = FALSE, 
+    trim_ws = TRUE)
+
+brain_unbound_ion <- read_delim("TMT_output_philosopher_for_R_analysis/brain_flowthrough_ion.tsv", 
+    delim = "\t", escape_double = FALSE, 
+    trim_ws = TRUE)
+
+MLE_bound_ion <- read_delim("TMT_output_philosopher_for_R_analysis/MLE_bound_ion.tsv", 
+    delim = "\t", escape_double = FALSE, 
+    trim_ws = TRUE)
+
+MLE_unbound_ion <- read_delim("TMT_output_philosopher_for_R_analysis/MLE_flowthrough_ion.tsv", 
+    delim = "\t", escape_double = FALSE, 
+    trim_ws = TRUE)
+
+
+```
+
+
+
+## Define a mytheme for barplots
+```{r}
+
+library(ggplot2)
+
+my_barplot_theme <- function() {
+  theme_minimal() +
+    theme(
+      plot.title = element_text(size = 16),            # Title font size
+      axis.title.x = element_text(size = 16),          # X-axis title font size
+      axis.title.y = element_text(size = 16),          # Y-axis title font size
+      axis.text.x = element_text(size = 14),           # X-axis labels font size
+      axis.text.y = element_text(size = 18)            # Y-axis labels font size
+    )
+}
+
+```
+
+
+
+
+# Prevalence of Cys in precursor ions
+```{r}
+
+# Calculate percentage of rows with at least one "C" in 'Peptide Sequence' for each dataframe
+calculate_percentage_C <- function(df, peptide_col_name) {
+  # Count rows with at least one "C" in the specified column
+  rows_with_C <- sum(grepl("C", df[[peptide_col_name]], fixed = TRUE))
+  
+  # Calculate percentage
+  percentage_with_C <- (rows_with_C / nrow(df)) * 100
+  
+  return(percentage_with_C)
+}
+
+# Apply the function to each dataframe
+percentage_brain_bound_ion <- calculate_percentage_C(brain_bound_ion, 'Peptide Sequence')
+percentage_brain_unbound_ion <- calculate_percentage_C(brain_unbound_ion, 'Peptide Sequence')
+percentage_MLE_bound_ion <- calculate_percentage_C(MLE_bound_ion, 'Peptide Sequence')
+percentage_MLE_unbound_ion <- calculate_percentage_C(MLE_unbound_ion, 'Peptide Sequence')
+
+# Print the results
+cat("Percentage of rows with at least one 'C' in 'Peptide Sequence':\n")
+cat("Brain Bound Ion: ", percentage_brain_bound_ion, "%\n")
+cat("Brain Unbound Ion: ", percentage_brain_unbound_ion, "%\n")
+cat("MLE Bound Ion: ", percentage_MLE_bound_ion, "%\n")
+cat("MLE Unbound Ion: ", percentage_MLE_unbound_ion, "%\n")
+
+
+# Assuming the percentage calculation code has been run and the variables are set
+# Create a dataframe for plotting
+percentage_data <- data.frame(
+  dataset = c("Brain Bound", "Brain Unbound", "MLE Bound", "MLE Unbound"),
+  percentage = c(percentage_brain_bound_ion, percentage_brain_unbound_ion, 
+                 percentage_MLE_bound_ion, percentage_MLE_unbound_ion)
+)
+
+# Plotting
+ggplot(percentage_data, aes(x = dataset, y = percentage, fill = dataset)) +
+  geom_bar(stat = "identity", color = "black", fill = "grey") + # Use fill to color bars if needed
+  theme_minimal() +
+  labs(title = "Percentage of Precursor Ions with 1 or More Cysteine",
+    x = "",
+    y = "Cys Containing Precursor Ions (%)"
+  ) +
+  my_barplot_theme()  # Apply the custom theme
+
+# Save the plot
+ggsave("percentage_of_C_in_peptide_sequence.pdf", width = 8, height = 4)
+
+
+```
+
+
+
+## Number of Cys per precursor ion
+# slightly different from above, where the question was percentage of precursor ions with at least 1 Cys 
+```{r}
+
+# Modified function to count "C" in each peptide sequence
+calculate_C_counts <- function(df, peptide_col_name) {
+  # Count "C" in each row of the specified column
+  C_counts <- sapply(df[[peptide_col_name]], function(sequence) {
+    sum(strsplit(sequence, "")[[1]] == "C")
+  })
+  
+  # Return the counts
+  return(C_counts)
+}
+
+# Function to calculate mean and median from counts
+calculate_mean_median <- function(C_counts) {
+  mean_value <- mean(C_counts)
+  median_value <- median(C_counts)
+  list(mean = mean_value, median = median_value)
+}
+
+# Updated function to apply the calculations
+calculate_stats <- function(df, peptide_col_name) {
+  C_counts <- calculate_C_counts(df, peptide_col_name)
+  calculate_mean_median(C_counts)
+}
+
+# Apply the function to each dataframe and calculate statistics
+stats_brain_bound_ion <- calculate_stats(brain_bound_ion, 'Peptide Sequence')
+stats_brain_unbound_ion <- calculate_stats(brain_unbound_ion, 'Peptide Sequence')
+stats_MLE_bound_ion <- calculate_stats(MLE_bound_ion, 'Peptide Sequence')
+stats_MLE_unbound_ion <- calculate_stats(MLE_unbound_ion, 'Peptide Sequence')
+
+# Print mean and median counts of 'C' in peptide sequences
+cat("Mean and Median Counts of 'C' in Peptide Sequences:\n")
+cat("Brain Bound - Mean:", stats_brain_bound_ion$mean, "Median:", stats_brain_bound_ion$median, "\n")
+cat("Brain Unbound - Mean:", stats_brain_unbound_ion$mean, "Median:", stats_brain_unbound_ion$median, "\n")
+cat("MLE Bound - Mean:", stats_MLE_bound_ion$mean, "Median:", stats_MLE_bound_ion$median, "\n")
+cat("MLE Unbound - Mean:", stats_MLE_unbound_ion$mean, "Median:", stats_MLE_unbound_ion$median, "\n")
+
+# Create a dataframe for plotting the mean values of Mean Number Cys per Precursos
+stats_data <- data.frame(
+  dataset = c("Brain Bound", "Brain Unbound", "MLE Bound", "MLE Unbound"),
+  mean = c(stats_brain_bound_ion$mean, stats_brain_unbound_ion$mean, 
+           stats_MLE_bound_ion$mean, stats_MLE_unbound_ion$mean)
+)
+
+# Example plot using the custom theme
+ggplot(stats_data, aes(x = dataset, y = mean, fill = dataset)) +
+  geom_bar(stat = "identity", position = position_dodge(), color = "black", fill = "grey") +
+  labs(
+    title = "Number of Cys per Precursor Ion",
+    x = "",
+    y = "Cys Count (Mean)"
+  ) +
+  my_barplot_theme()  # Apply the custom theme
+
+# Save the plot
+ggsave("C_count_in_peptide_sequence_mean.pdf", width = 8, height = 4)
+
+```
+

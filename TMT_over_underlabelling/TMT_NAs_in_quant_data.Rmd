@@ -1,0 +1,98 @@
+---
+title: "TMT Missing Quant Data Evaluation"
+output: html_document
+date: "2024-02-15"
+---
+
+## Assess what degree of "missingness"/NA's are present in the TMT quant data
+
+## Import TMT Multi Site Quant Data - Brain
+## Determine number/percentage of missing TMT observations per row in the multi-site dataset
+```{r}
+
+library(readr)
+brain_bound_TMT_NAs <- read_delim("../TMT_output_philosopher_for_R_analysis/2_14_24_output_for_R/brain_bound_abundance_multi-site_None.tsv", 
+    delim = "\t", escape_double = FALSE, 
+    trim_ws = TRUE)
+
+
+library(dplyr)
+
+# Selecting the relevant columns from sample-01 to sample-08
+samples_data <- select(brain_bound_TMT_NAs, `sample-01`, `sample-02`, `sample-03`, `sample-04`, `sample-05`, `sample-06`, `sample-07`, `sample-08`)
+
+# Calculate the count of non-NA values per row
+non_na_counts <- rowSums(!is.na(samples_data))
+
+# Calculate the frequency of each count value (0 through 8)
+frequency_table <- table(non_na_counts)
+total_rows <- nrow(brain_bound_TMT_NAs)
+
+# Ensure we account for all 2008 rows, including those that might not appear in the frequency table explicitly
+frequency_df <- as.data.frame(frequency_table)
+names(frequency_df) <- c("NonNA_Count", "Frequency")
+
+# Adding rows for any missing NonNA_Count values to ensure completeness
+all_counts <- data.frame(NonNA_Count = 0:8)
+frequency_df_complete <- merge(all_counts, frequency_df, by = "NonNA_Count", all.x = TRUE)
+frequency_df_complete$Frequency[is.na(frequency_df_complete$Frequency)] <- 0
+
+# Calculate the percentage
+frequency_df_complete$Percentage <- (frequency_df_complete$Frequency / total_rows) * 100
+
+# Print the results
+for(i in 8:0) {
+  count <- frequency_df_complete$Frequency[frequency_df_complete$NonNA_Count == i]
+  percentage <- frequency_df_complete$Percentage[frequency_df_complete$NonNA_Count == i]
+  cat(paste("Rows with", i, "non-NA values:", count, "- Percentage:", round(percentage, 2), "%\n"))
+}
+
+```
+
+
+
+## Import TMT Multi Site Quant Data - MLE12
+## Determine number/percentage of missing TMT observations per row in the multi-site dataset
+```{r}
+
+
+library(readr)
+MLE_bound_TMT_NAs <- read_delim("../TMT_output_philosopher_for_R_analysis/2_14_24_output_for_R/MLE_bound_abundance_multi-site_None.tsv", 
+    delim = "\t", escape_double = FALSE, 
+    trim_ws = TRUE)
+
+## Determine number/percentage of missing TMT observations per row in the multi-site dataset
+
+library(dplyr)
+
+# Selecting the relevant columns from sample-09 to sample-16
+samples_data <- select(MLE_bound_TMT_NAs, `sample-09`, `sample-10`, `sample-11`, `sample-12`, `sample-13`, `sample-14`, `sample-15`, `sample-16`)
+
+# Calculate the count of non-NA values per row
+non_na_counts <- rowSums(!is.na(samples_data))
+
+# Calculate the frequency of each count value (0 through 8)
+frequency_table <- table(non_na_counts)
+total_rows <- nrow(MLE_bound_TMT_NAs)
+
+# Ensure we account for all 2008 rows, including those that might not appear in the frequency table explicitly
+frequency_df <- as.data.frame(frequency_table)
+names(frequency_df) <- c("NonNA_Count", "Frequency")
+
+# Adding rows for any missing NonNA_Count values to ensure completeness
+all_counts <- data.frame(NonNA_Count = 0:8)
+frequency_df_complete <- merge(all_counts, frequency_df, by = "NonNA_Count", all.x = TRUE)
+frequency_df_complete$Frequency[is.na(frequency_df_complete$Frequency)] <- 0
+
+# Calculate the percentage
+frequency_df_complete$Percentage <- (frequency_df_complete$Frequency / total_rows) * 100
+
+# Print the results
+for(i in 8:0) {
+  count <- frequency_df_complete$Frequency[frequency_df_complete$NonNA_Count == i]
+  percentage <- frequency_df_complete$Percentage[frequency_df_complete$NonNA_Count == i]
+  cat(paste("Rows with", i, "non-NA values:", count, "- Percentage:", round(percentage, 2), "%\n"))
+}
+
+```
+
